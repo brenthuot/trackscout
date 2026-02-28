@@ -19,9 +19,9 @@ const T = {
   bgCard:    "#EFF0F1",  // $su-gray-light-20
   border:    "#D4D6D9",  // $su-gray-medium-30
   borderH:   "#9BA0A6",  // $su-gray-medium-70
-  muted:     "#707780",  // $su-gray-medium
-  dim:       "#ADB3B8",  // $su-gray-light
-  offWhite:  "#404040",  // $su-gray-dark (readable text on white)
+  muted:     "#404040",  // $su-gray-dark — was gray, now dark for readability
+  dim:       "#404040",  // $su-gray-dark — was gray, now dark for readability
+  offWhite:  "#000000",  // pure black for primary text
 
   // Semantic distance colors — all from SU palette
   green:  "#2B72D7",  // $su-blue-light    (local, cool = close)
@@ -109,6 +109,17 @@ const CITIES = [
   {n:"Knoxville, TN",c:[35.961,-83.921]},{n:"Oklahoma City, OK",c:[35.467,-97.516]},{n:"Salt Lake City, UT",c:[40.760,-111.891]},
   {n:"Omaha, NE",c:[41.257,-95.995]},{n:"Pittsburgh, PA",c:[40.440,-79.995]},{n:"Greensboro, NC",c:[36.073,-79.792]},
   {n:"Newark, NJ",c:[40.735,-74.172]},{n:"Hartford, CT",c:[41.764,-72.685]},
+  // Additional cities for broader state coverage
+  {n:"Boise, ID",c:[43.615,-116.202]},{n:"Cheyenne, WY",c:[41.140,-104.820]},{n:"Billings, MT",c:[45.783,-108.501]},
+  {n:"Fargo, ND",c:[46.877,-96.789]},{n:"Sioux Falls, SD",c:[43.549,-96.700]},{n:"Burlington, VT",c:[44.476,-73.212]},
+  {n:"Manchester, NH",c:[42.995,-71.454]},{n:"Portland, ME",c:[43.661,-70.255]},{n:"Charleston, WV",c:[38.350,-81.633]},
+  {n:"Albuquerque, NM",c:[35.085,-106.651]},{n:"Las Vegas, NV",c:[36.175,-115.137]},{n:"Tucson, AZ",c:[32.222,-110.926]},
+  {n:"Anchorage, AK",c:[61.218,-149.900]},{n:"Honolulu, HI",c:[21.307,-157.858]},{n:"Providence, RI",c:[41.824,-71.413]},
+  {n:"Wilmington, DE",c:[39.745,-75.547]},{n:"Spokane, WA",c:[47.659,-117.426]},{n:"Madison, WI",c:[43.073,-89.401]},
+  {n:"Milwaukee, WI",c:[43.038,-87.906]},{n:"Des Moines, IA",c:[41.600,-93.609]},{n:"Wichita, KS",c:[37.692,-97.337]},
+  {n:"Little Rock, AR",c:[34.746,-92.289]},{n:"Lubbock, TX",c:[33.578,-101.856]},{n:"El Paso, TX",c:[31.761,-106.485]},
+  {n:"Fresno, CA",c:[36.737,-119.787]},{n:"Colorado Springs, CO",c:[38.833,-104.821]},{n:"Tallahassee, FL",c:[30.455,-84.253]},
+  {n:"Augusta, GA",c:[33.470,-81.975]},{n:"Charlottesville, VA",c:[38.029,-78.476]},{n:"Eugene, OR",c:[44.052,-123.087]},
 ];
 
 // ── ATHLETE GENERATOR (deterministic, seeded RNG) ─────────────────────────────
@@ -203,9 +214,10 @@ function drawHeatmap(canvas, athletes, projection) {
   const pts = athletes.map(a => projection([a.hometownCoords[1], a.hometownCoords[0]])).filter(Boolean);
   if (!pts.length) return;
 
-  const density = new Float32Array(W * H);
-  const R = 28, bw = R / 2.2;
+  // Very tight kernel — city-level precision
+  const R = 14, bw = R / 2.8;
 
+  const density = new Float32Array(W * H);
   pts.forEach(([px, py]) => {
     const x0 = Math.max(0, (px-R)|0), x1 = Math.min(W-1, (px+R+1)|0);
     const y0 = Math.max(0, (py-R)|0), y1 = Math.min(H-1, (py+R+1)|0);
@@ -215,24 +227,43 @@ function drawHeatmap(canvas, athletes, projection) {
     }
   });
 
-  let mx=0; for (let i=0;i<density.length;i++) if(density[i]>mx) mx=density[i];
-  if (!mx) return;
+  // Use 90th-percentile normalization so sparse dots still show color variance
+  const vals = Array.from(density).filter(v=>v>0).sort((a,b)=>a-b);
+  const mx = vals[Math.floor(vals.length * 0.92)] || vals[vals.length-1] || 1;
+
+  // Weather-radar color ramp: transparent → deep blue → cyan → green → yellow → orange → red
+  // 6 distinct color stops across the density range
+  const STOPS = [
+    [0.00, null],                  // transparent
+    [0.06, [0,   0,  200, 160]],   // deep blue   (very sparse)
+    [0.22, [0, 180,  220, 190]],   // cyan
+    [0.42, [0, 210,   80, 210]],   // green
+    [0.62, [255, 230,   0, 225]],  // yellow
+    [0.80, [255, 120,   0, 235]],  // orange
+    [1.00, [255,   0,   0, 245]],  // red          (densest)
+  ];
+
+  const lerp = (a,b,t) => a + (b-a)*t;
 
   const img = ctx.createImageData(W, H);
   for (let i=0; i<density.length; i++) {
-    const t = Math.min(1, density[i]/mx);
-    if (t < 0.008) continue;
-    const idx = i*4;
-    // Color ramp: SU blue → dark orange → primary orange → light orange → white
-    if (t < 0.25) {
-      const s=t/0.25; img.data[idx]=Math.round(s*215); img.data[idx+1]=Math.round(s*65); img.data[idx+2]=0; img.data[idx+3]=Math.round(s*180);
-    } else if (t < 0.6) {
-      const s=(t-0.25)/0.35; img.data[idx]=Math.round(215+s*32); img.data[idx+1]=Math.round(65+s*47); img.data[idx+2]=0; img.data[idx+3]=Math.round(180+s*50);
-    } else if (t < 0.85) {
-      const s=(t-0.6)/0.25; img.data[idx]=255; img.data[idx+1]=Math.round(112+s*30); img.data[idx+2]=0; img.data[idx+3]=Math.round(230+s*15);
-    } else {
-      const s=(t-0.85)/0.15; img.data[idx]=255; img.data[idx+1]=Math.round(142+s*113); img.data[idx+2]=Math.round(s*255); img.data[idx+3]=245;
+    const t = Math.min(1, density[i] / mx);
+    if (t < STOPS[1][0]) continue; // below threshold — transparent
+
+    // Find which two stops we're between
+    let s0=STOPS[1], s1=STOPS[2];
+    for (let k=1; k<STOPS.length-1; k++) {
+      if (t >= STOPS[k][0] && t <= STOPS[k+1][0]) { s0=STOPS[k]; s1=STOPS[k+1]; break; }
     }
+    if (t > STOPS[STOPS.length-1][0]) { s0=STOPS[STOPS.length-2]; s1=STOPS[STOPS.length-1]; }
+
+    const f = s1[0]===s0[0] ? 1 : (t - s0[0]) / (s1[0] - s0[0]);
+    const c0 = s0[1], c1 = s1[1];
+    const idx = i*4;
+    img.data[idx]   = Math.round(lerp(c0[0], c1[0], f));
+    img.data[idx+1] = Math.round(lerp(c0[1], c1[1], f));
+    img.data[idx+2] = Math.round(lerp(c0[2], c1[2], f));
+    img.data[idx+3] = Math.round(lerp(c0[3], c1[3], f));
   }
   ctx.putImageData(img, 0, 0);
 }
@@ -282,8 +313,8 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
 
     if(mapMode==="heatmap") return;
 
-    // Filter by selected states if any
-    const stateFiltered = hasStateFilter
+    // State filter only applies in flows mode
+    const stateFiltered = (hasStateFilter && mapMode==="flows")
       ? athletes.filter(a=>selectedStates.includes(getState(a.hometown)))
       : athletes;
 
@@ -530,7 +561,7 @@ function StateFilterDropdown({selectedStates, onChange}) {
 }
 
 // ── FILTER CONTROLS ───────────────────────────────────────────────────────────
-function FilterControls({filters, setFilters, showSeason=false, selectedStates=[], onStatesChange=()=>{}}) {
+function FilterControls({filters, setFilters, showSeason=false, selectedStates=[], onStatesChange=()=>{}, mapMode="flows"}) {
   const confColleges = getConfColleges(filters.conference);
   const season = filters.season || "all";
   const visibleEvents = EVENTS_CFG.filter(e => season==="all" || e.season==="both" || e.season===season);
@@ -586,7 +617,7 @@ function FilterControls({filters, setFilters, showSeason=false, selectedStates=[
           {COLLEGE_YEARS.map(y=><Chip key={y} label={`Y${y}`} active={filters.collegeYear===String(y)} onClick={()=>setFilters(f=>({...f,collegeYear:f.collegeYear===String(y)?"":String(y)}))}/>)}
         </div>
       </div>
-      <StateFilterDropdown selectedStates={selectedStates} onChange={onStatesChange}/>
+      {mapMode==="flows" && <StateFilterDropdown selectedStates={selectedStates} onChange={onStatesChange}/>}
     </div>
   );
 }
@@ -657,13 +688,13 @@ function HeatmapPanel({athletes}) {
       <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
         <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:7}}>Density Scale</div>
         <div style={{display:"flex",height:10,borderRadius:4,overflow:"hidden",marginBottom:5}}>
-          {["#000E54","#D74100","#F76900","#FF8E00","#FF431B","#FCC399","#FFFFFF"].map((c,i)=>(
+          {["#0000C8","#00B4DC","#00D250","#FFE600","#FF7800","#FF0000"].map((c,i)=>(
             <div key={i} style={{flex:1,background:c}}/>
           ))}
         </div>
         <div style={{display:"flex",justifyContent:"space-between"}}>
-          <span style={{color:T.dim,fontSize:9}}>Low density</span>
-          <span style={{color:T.dim,fontSize:9}}>High density</span>
+          <span style={{color:T.dim,fontSize:9}}>Sparse</span>
+          <span style={{color:T.dim,fontSize:9}}>Dense</span>
         </div>
       </div>
 
@@ -879,7 +910,7 @@ function AthleteDetail({athlete,onClose}){
 
   if(!athlete) return(
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,padding:24}}>
-      <div style={{fontSize:44,opacity:0.15}}>⚡</div>
+      <div style={{fontSize:44,opacity:0.15}}>🌍</div>
       <div style={{color:T.dim,fontFamily:"'Barlow Condensed',sans-serif",fontSize:11,letterSpacing:3,textTransform:"uppercase",textAlign:"center",lineHeight:1.9}}>Select an athlete<br/>on the map</div>
     </div>
   );
@@ -1072,7 +1103,7 @@ export default function App(){
   const handleAthleteClick=a=>{setSelectedAthlete(s=>s?.id===a.id?null:a);setRightTab("athlete");};
   const handleFocusCollege=c=>{setFocusedCollege(c);if(c)setFocusedHometown("");};
   const handleFocusHometown=h=>{setFocusedHometown(h);if(h)setFocusedCollege("");};
-  const switchMapMode=m=>{setMapMode(m);if(m==="heatmap")setRightTab("heatmap");};
+  const switchMapMode=m=>{setMapMode(m);if(m==="heatmap")setRightTab("heatmap");if(m!=="flows")setSelectedStates([]);};
   const switchRightTab=t=>{setRightTab(t);if(t==="heatmap")setMapMode("heatmap");else if(mapMode==="heatmap")setMapMode("flows");};
 
   const highlightCollege=rightTab==="college"?focusedCollege:"";
@@ -1089,10 +1120,10 @@ export default function App(){
         {/* HEADER */}
         <div style={{padding:"9px 18px",background:T.bgPanel,borderBottom:`2px solid ${T.orange}`,display:"flex",alignItems:"center",gap:14,flexShrink:0,boxShadow:`0 2px 20px rgba(247,105,0,0.2)`}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:34,height:34,borderRadius:7,background:`linear-gradient(135deg,${T.orange},${T.orangeD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:19,boxShadow:`0 0 20px ${T.orangeGlow}`}}>⚡</div>
+            <div style={{fontSize:28}}>🌍</div>
             <div>
-              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,fontWeight:900,letterSpacing:4,color:T.blueP,textTransform:"uppercase"}}>Run Orange</div>
-              <div style={{fontSize:9,color:T.muted,letterSpacing:3,textTransform:"uppercase",marginTop:-2}}>Recruiting Intelligence</div>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,fontWeight:900,letterSpacing:4,color:T.blueP,textTransform:"uppercase"}}>Run Stats</div>
+              <div style={{fontSize:9,color:T.muted,letterSpacing:3,textTransform:"uppercase",marginTop:-2}}>Interactive Map</div>
             </div>
           </div>
 
@@ -1124,7 +1155,7 @@ export default function App(){
               {hasFilters&&<button onClick={()=>{setFilters({...BLANK_FILTERS});setSearch("");setSelectedStates([]);}} style={{background:"none",border:"none",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CLEAR</button>}
             </div>
 
-            <FilterControls filters={filters} setFilters={setFilters} showSeason={true} selectedStates={selectedStates} onStatesChange={setSelectedStates}/>
+            <FilterControls filters={filters} setFilters={setFilters} showSeason={true} selectedStates={selectedStates} onStatesChange={setSelectedStates} mapMode={mapMode}/>
 
             <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:4}}>
               <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Athletes ({filtered.length})</div>
@@ -1150,7 +1181,7 @@ export default function App(){
             <USMap athletes={filtered} onAthleteClick={handleAthleteClick} selectedAthlete={selectedAthlete} highlightCollege={highlightCollege} highlightHometown={highlightHometown} mapMode={mapMode} selectedStates={selectedStates}/>
 
             {/* Selected states indicator */}
-            {selectedStates.length>0 && mapMode!=="heatmap" && (
+            {selectedStates.length>0 && mapMode==="flows" && (
               <div style={{position:"absolute",top:14,left:"50%",transform:"translateX(-50%)",background:"#FFFFFF",border:`2px solid ${T.orange}`,borderRadius:20,padding:"5px 16px",boxShadow:`0 2px 16px rgba(247,105,0,0.2)`,display:"flex",alignItems:"center",gap:10,zIndex:10,whiteSpace:"nowrap"}}>
                 <div style={{width:7,height:7,borderRadius:"50%",background:T.orange}}/>
                 <span style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:800,letterSpacing:1}}>
@@ -1166,7 +1197,7 @@ export default function App(){
                 <div>
                   <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Hometown Density</div>
                   <div style={{display:"flex",gap:3,alignItems:"center",marginBottom:4}}>
-                    {["#000E54","#D74100","#F76900","#FF8E00","#FFFFFF"].map((c,i)=><div key={i} style={{width:22,height:7,background:c,borderRadius:1}}/>)}
+                    {["#0000C8","#00B4DC","#00D250","#FFE600","#FF7800","#FF0000"].map((c,i)=><div key={i} style={{width:22,height:7,background:c,borderRadius:1}}/>)}
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:T.dim,fontSize:9}}>Low</span><span style={{color:T.dim,fontSize:9}}>High</span></div>
                   <div style={{color:T.muted,fontSize:9,marginTop:4}}>{filtered.length} athletes shown</div>
