@@ -53,9 +53,6 @@ const EVENTS_CFG = [
   {id:"JT",     label:"Javelin",       season:"outdoor"},
   {id:"Pent",   label:"Pentathlon",    season:"indoor" },
   {id:"Hept",   label:"Heptathlon",    season:"outdoor"},
-  {id:"4x100",  label:"4x100m",        season:"outdoor"},
-  {id:"4x400",  label:"4x400m",        season:"both"   },
-  {id:"XC",     label:"Cross Country", season:"outdoor"},
 ];
 
 // ── COLLEGE COORDINATES ───────────────────────────────────────────────────────
@@ -176,16 +173,21 @@ function resolveHometownCoords(hometown) {
 }
 
 // ── SUPABASE DATA TRANSFORMER ─────────────────────────────────────────────────
+const RELAY_EVENTS = new Set(["4x100", "4x400", "4x100m", "4x400m", "XC", "DMR", "SMR"]);
+
 function transformAthlete(raw, index) {
   const perfs = raw.performances || [];
   const collegeTimes = {};
   const hsTimes = {};
   perfs.forEach(p => {
     if (!p.mark || !p.event) return;
+    if (RELAY_EVENTS.has(p.event)) return; // skip relays
     const bucket = p.level === "hs" ? hsTimes : collegeTimes;
     if (!bucket[p.event] || p.mark < bucket[p.event]) bucket[p.event] = p.mark;
   });
   const college = raw.college || "Unknown";
+  // Filter relay/XC events from the events array too
+  const events = (raw.events || []).filter(e => !RELAY_EVENTS.has(e));
   return {
     id: raw.id || `idx_${index}`,
     name: raw.name || "Unknown",
@@ -194,7 +196,7 @@ function transformAthlete(raw, index) {
     hsName: raw.high_school || "",
     college,
     conference: raw.conference || "",
-    events: raw.events || [],
+    events,
     hsTimes,
     collegeTimes,
     hsYear: raw.hs_grad_year || null,
