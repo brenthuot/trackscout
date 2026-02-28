@@ -1,0 +1,46 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+```
+
+---
+
+### Step 4 — Verify Your File Structure
+
+Your repo should look exactly like this:
+```
+trackscout/
+├── src/
+│   ├── App.jsx
+│   ├── main.jsx
+│   └── index.css
+├── index.html
+├── package.json
+├── README.md
+└── vite.config.js
+```
+
+If anything is missing, click **Add file → Create new file** and add it. If a file is in the wrong place, click it → pencil icon → fix the name → commit.
+
+---
+
+### Step 5 — Deploy to Vercel
+
+1. Go to **vercel.com**
+2. Click **Sign up** → choose **Continue with GitHub** (must use GitHub option)
+3. Click **Add New Project**
+4. Find `trackscout` in the list → click **Import**
+5. Vercel auto-detects Vite — don't change any settings
+6. Click **Deploy**
+
+Wait 60–90 seconds.
+
+---
+
+### Step 6 — Get Your Live URL
+
+When the screen says **Congratulations**, your app is live. You'll get a URL like:
+```
+trackscout-xyz123.vercel.app
