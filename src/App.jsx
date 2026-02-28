@@ -238,9 +238,10 @@ function drawHeatmap(canvas, athletes, projection) {
 }
 
 // ── US MAP ────────────────────────────────────────────────────────────────────
-function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, highlightHometown, mapMode}) {
+function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, highlightHometown, mapMode, selectedStates}) {
   const svgRef=useRef(null), canvasRef=useRef(null), projRef=useRef(null);
   const [geo,setGeo]=useState(null), [tooltip,setTooltip]=useState(null);
+  const FIPS_ABBR={"01":"AL","02":"AK","04":"AZ","05":"AR","06":"CA","08":"CO","09":"CT","10":"DE","11":"DC","12":"FL","13":"GA","15":"HI","16":"ID","17":"IL","18":"IN","19":"IA","20":"KS","21":"KY","22":"LA","23":"ME","24":"MD","25":"MA","26":"MI","27":"MN","28":"MS","29":"MO","30":"MT","31":"NE","32":"NV","33":"NH","34":"NJ","35":"NM","36":"NY","37":"NC","38":"ND","39":"OH","40":"OK","41":"OR","42":"PA","44":"RI","45":"SC","46":"SD","47":"TN","48":"TX","49":"UT","50":"VT","51":"VA","53":"WA","54":"WV","55":"WI","56":"WY"};
 
   useEffect(()=>{
     const load=tj=>{fetch("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json").then(r=>r.json()).then(us=>setGeo(tj.feature(us,us.objects.states)));};
@@ -248,7 +249,6 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const sc=document.createElement("script"); sc.src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"; sc.onload=()=>load(window.topojson); document.head.appendChild(sc);
   },[]);
 
-  // Draw vector map
   useEffect(()=>{
     if(!geo||!svgRef.current) return;
     const svg=d3.select(svgRef.current);
@@ -259,21 +259,43 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const path=d3.geoPath().projection(proj);
     const g=svg.append("g");
     const px=([lat,lon])=>proj([lon,lat]);
+    const hasStateFilter = selectedStates.length > 0;
 
-    g.selectAll("path").data(geo.features).join("path")
-      .attr("d",path).attr("fill","#E6E7EE").attr("stroke","#CCCFDD").attr("stroke-width",0.8);
+    // Draw states — highlight selected ones
+    g.selectAll("path.state").data(geo.features).join("path")
+      .attr("class","state")
+      .attr("d",path)
+      .attr("fill",d=>{
+        const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
+        if(!hasStateFilter) return "#E6E7EE";
+        return selectedStates.includes(abbr)?"#FCC399":"#F1F2F5";
+      })
+      .attr("stroke",d=>{
+        const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
+        return hasStateFilter&&selectedStates.includes(abbr)?T.orange:"#CCCFDD";
+      })
+      .attr("stroke-width",d=>{
+        const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
+        return hasStateFilter&&selectedStates.includes(abbr)?2:0.8;
+      })
+      .style("cursor","default");
 
-    if(mapMode==="heatmap") return; // canvas handles rendering
+    if(mapMode==="heatmap") return;
+
+    // Filter by selected states if any
+    const stateFiltered = hasStateFilter
+      ? athletes.filter(a=>selectedStates.includes(getState(a.hometown)))
+      : athletes;
 
     const anyFocus=highlightCollege||highlightHometown;
-    const active=anyFocus?athletes.filter(a=>(highlightCollege?a.college===highlightCollege:true)&&(highlightHometown?a.hometown===highlightHometown:true)):athletes;
-    const dimmed=athletes.filter(a=>!active.includes(a));
+    const active=anyFocus?stateFiltered.filter(a=>(highlightCollege?a.college===highlightCollege:true)&&(highlightHometown?a.hometown===highlightHometown:true)):stateFiltered;
+    const dimmed=athletes.filter(a=>!stateFiltered.includes(a));
 
     if(mapMode==="flows"){
       dimmed.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
         const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.55;
-        g.append("path").attr("d",`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`).attr("fill","none").attr("stroke","rgba(255,255,255,0.04)").attr("stroke-width",1);
+        g.append("path").attr("d",`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`).attr("fill","none").attr("stroke","rgba(0,0,0,0.04)").attr("stroke-width",0.8);
       });
       active.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
@@ -281,10 +303,10 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
         const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.55;
         const arc=`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`;
         if(isSel) g.append("path").attr("d",arc).attr("fill","none").attr("stroke",`${T.orange}55`).attr("stroke-width",8);
-        g.append("path").attr("d",arc).attr("fill","none").attr("stroke",isSel?T.white:col).attr("stroke-width",isSel?2.5:1.4).attr("stroke-opacity",isSel?1:0.72).style("cursor","pointer")
+        g.append("path").attr("d",arc).attr("fill","none").attr("stroke",isSel?T.orange:col).attr("stroke-width",isSel?2.5:1.6).attr("stroke-opacity",isSel?1:0.82).style("cursor","pointer")
           .on("mouseover",function(ev){d3.select(this).attr("stroke-width",3).attr("stroke-opacity",1);setTooltip({x:ev.offsetX,y:ev.offsetY,a,dist:Math.round(dist)});})
-          .on("mouseout",function(){d3.select(this).attr("stroke-width",isSel?2.5:1.4).attr("stroke-opacity",isSel?1:0.72);setTooltip(null);})
-          .on("click",()=>onAthleteClick(a));
+          .on("mouseout",function(){d3.select(this).attr("stroke-width",isSel?2.5:1.6).attr("stroke-opacity",isSel?1:0.82);setTooltip(null);})
+          .on("click",ev=>{ev.stopPropagation();onAthleteClick(a);});
         const sz=isSel?5.5:3.5;
         g.append("circle").attr("cx",h[0]).attr("cy",h[1]).attr("r",sz).attr("fill",col).attr("stroke","#FFFFFF").attr("stroke-width",1.5).attr("opacity",0.95);
         const s=isSel?7:5;
@@ -305,7 +327,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
           .on("click",()=>onAthleteClick(a));
       });
     }
-  },[geo,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode]);
+  },[geo,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates]);
 
   // Draw heatmap canvas
   useEffect(()=>{
@@ -385,8 +407,130 @@ function DistBar({athletes}){
   );
 }
 
-// ── FILTER SECTION (reusable for main + heatmap) ──────────────────────────────
-function FilterControls({filters, setFilters, showSeason=false}) {
+// ── STATE DATA ────────────────────────────────────────────────────────────────
+const STATE_NAMES = {
+  AL:"Alabama",AK:"Alaska",AZ:"Arizona",AR:"Arkansas",CA:"California",
+  CO:"Colorado",CT:"Connecticut",DE:"Delaware",FL:"Florida",GA:"Georgia",
+  HI:"Hawaii",ID:"Idaho",IL:"Illinois",IN:"Indiana",IA:"Iowa",KS:"Kansas",
+  KY:"Kentucky",LA:"Louisiana",ME:"Maine",MD:"Maryland",MA:"Massachusetts",
+  MI:"Michigan",MN:"Minnesota",MS:"Mississippi",MO:"Missouri",MT:"Montana",
+  NE:"Nebraska",NV:"Nevada",NH:"New Hampshire",NJ:"New Jersey",NM:"New Mexico",
+  NY:"New York",NC:"North Carolina",ND:"North Dakota",OH:"Ohio",OK:"Oklahoma",
+  OR:"Oregon",PA:"Pennsylvania",RI:"Rhode Island",SC:"South Carolina",
+  SD:"South Dakota",TN:"Tennessee",TX:"Texas",UT:"Utah",VT:"Vermont",
+  VA:"Virginia",WA:"Washington",WV:"West Virginia",WI:"Wisconsin",WY:"Wyoming",
+  DC:"Washington D.C.",
+};
+
+const getState = (hometown) => {
+  const parts = hometown.split(", ");
+  return parts.length >= 2 ? parts[parts.length - 1].trim() : null;
+};
+
+// ── STATE MULTI-SELECT DROPDOWN ───────────────────────────────────────────────
+const ALL_STATE_ABBRS = Object.keys(STATE_NAMES).sort((a,b)=>STATE_NAMES[a].localeCompare(STATE_NAMES[b]));
+
+function StateFilterDropdown({selectedStates, onChange}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const dropRef = useRef(null);
+
+  // Close on outside click
+  useEffect(()=>{
+    const handler = e => { if(dropRef.current && !dropRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return ()=>document.removeEventListener("mousedown", handler);
+  },[]);
+
+  const filtered = ALL_STATE_ABBRS.filter(abbr=>
+    STATE_NAMES[abbr].toLowerCase().includes(search.toLowerCase()) ||
+    abbr.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const toggle = abbr => {
+    onChange(selectedStates.includes(abbr)
+      ? selectedStates.filter(s=>s!==abbr)
+      : [...selectedStates, abbr]
+    );
+  };
+
+  const count = selectedStates.length;
+
+  return(
+    <div ref={dropRef} style={{position:"relative",marginBottom:9}}>
+      <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:5}}>
+        Origin State {count>0&&<span style={{color:T.orange,fontWeight:800}}>({count} selected)</span>}
+      </div>
+
+      {/* Trigger button */}
+      <button onClick={()=>setOpen(o=>!o)} style={{
+        width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",
+        background:T.bg,border:`1px solid ${count>0?T.orange:T.border}`,borderRadius:6,
+        padding:"5px 8px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",
+        fontSize:12,color:count>0?T.orange:T.muted,letterSpacing:1,
+      }}>
+        <span>{count===0?"All States":count===1?STATE_NAMES[selectedStates[0]]:`${count} States`}</span>
+        <span style={{fontSize:9,opacity:0.6}}>{open?"▲":"▼"}</span>
+      </button>
+
+      {/* Dropdown panel */}
+      {open && (
+        <div style={{
+          position:"absolute",top:"100%",left:0,right:0,zIndex:200,
+          background:T.bg,border:`1px solid ${T.border}`,borderRadius:7,
+          boxShadow:"0 8px 24px rgba(0,0,0,0.12)",marginTop:3,
+          display:"flex",flexDirection:"column",maxHeight:280,overflow:"hidden",
+        }}>
+          {/* Search */}
+          <div style={{padding:"7px 8px",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+            <input
+              autoFocus
+              value={search}
+              onChange={e=>setSearch(e.target.value)}
+              placeholder="Search states..."
+              style={{width:"100%",background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:5,
+                padding:"4px 8px",fontSize:11,color:T.offWhite,fontFamily:"'Barlow',sans-serif",outline:"none"}}
+            />
+          </div>
+
+          {/* Select All / None */}
+          <div style={{display:"flex",gap:6,padding:"5px 8px",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+            <button onClick={()=>onChange(ALL_STATE_ABBRS)} style={{flex:1,background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:4,padding:"3px 0",fontSize:10,color:T.orange,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>SELECT ALL</button>
+            <button onClick={()=>onChange([])} style={{flex:1,background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:4,padding:"3px 0",fontSize:10,color:T.muted,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>SELECT NONE</button>
+          </div>
+
+          {/* Checkbox list */}
+          <div style={{overflowY:"auto",flex:1}}>
+            {filtered.length===0?(
+              <div style={{padding:"12px 8px",color:T.dim,fontSize:11,textAlign:"center"}}>No states found</div>
+            ):filtered.map(abbr=>{
+              const checked = selectedStates.includes(abbr);
+              return(
+                <label key={abbr} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 10px",cursor:"pointer",background:checked?`${T.orange}08`:"transparent",borderBottom:`1px solid ${T.border}22`}}>
+                  <div style={{
+                    width:14,height:14,borderRadius:3,flexShrink:0,
+                    background:checked?T.orange:T.bg,
+                    border:`2px solid ${checked?T.orange:T.border}`,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    transition:"all 0.1s",
+                  }}>
+                    {checked&&<span style={{color:"#fff",fontSize:9,lineHeight:1,fontWeight:900}}>✓</span>}
+                  </div>
+                  <input type="checkbox" checked={checked} onChange={()=>toggle(abbr)} style={{display:"none"}}/>
+                  <span style={{color:checked?T.orange:T.offWhite,fontSize:12,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:0.5,fontWeight:checked?700:400}}>{STATE_NAMES[abbr]}</span>
+                  <span style={{color:T.dim,fontSize:10,fontFamily:"monospace",marginLeft:"auto"}}>{abbr}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── FILTER CONTROLS ───────────────────────────────────────────────────────────
+function FilterControls({filters, setFilters, showSeason=false, selectedStates=[], onStatesChange=()=>{}}) {
   const confColleges = getConfColleges(filters.conference);
   const season = filters.season || "all";
   const visibleEvents = EVENTS_CFG.filter(e => season==="all" || e.season==="both" || e.season===season);
@@ -442,6 +586,7 @@ function FilterControls({filters, setFilters, showSeason=false}) {
           {COLLEGE_YEARS.map(y=><Chip key={y} label={`Y${y}`} active={filters.collegeYear===String(y)} onClick={()=>setFilters(f=>({...f,collegeYear:f.collegeYear===String(y)?"":String(y)}))}/>)}
         </div>
       </div>
+      <StateFilterDropdown selectedStates={selectedStates} onChange={onStatesChange}/>
     </div>
   );
 }
@@ -464,14 +609,36 @@ function applyFilters(athletes, filters, search="") {
 
 // ── HEATMAP PANEL ─────────────────────────────────────────────────────────────
 function HeatmapPanel({athletes}) {
+  const [rankTab, setRankTab] = useState("cities");
+
   const topCities = useMemo(()=>{
     const map={};
     athletes.forEach(a=>{if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
     return Object.values(map).sort((a,b)=>b.count-a.count).slice(0,15);
   },[athletes]);
 
+  const topStates = useMemo(()=>{
+    const map={};
+    athletes.forEach(a=>{
+      const st = getState(a.hometown);
+      if(!st) return;
+      if(!map[st]) map[st]={abbr:st,name:STATE_NAMES[st]||st,count:0,cities:new Set()};
+      map[st].count++;
+      map[st].cities.add(a.hometown);
+    });
+    return Object.values(map)
+      .map(s=>({...s,cityCount:s.cities.size}))
+      .sort((a,b)=>b.count-a.count)
+      .slice(0,15);
+  },[athletes]);
+
+  const uniqueStateCount = useMemo(()=>{
+    const s=new Set(); athletes.forEach(a=>{const st=getState(a.hometown);if(st)s.add(st);}); return s.size;
+  },[athletes]);
+
   return(
     <div style={{padding:"14px",height:"100%",overflowY:"auto"}}>
+      {/* Header info */}
       <div style={{marginBottom:12}}>
         <div style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,letterSpacing:2,textTransform:"uppercase",marginBottom:6}}>Hometown Density Map</div>
         <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:10}}>
@@ -479,13 +646,14 @@ function HeatmapPanel({athletes}) {
             The heatmap reflects your <span style={{color:T.orange,fontWeight:700}}>active filters</span> in the left panel. Adjust events, conference, college, year, or season to update the density view.
           </div>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-          <StatCard label="Athletes Shown" value={athletes.length} color={T.orange}/>
-          <StatCard label="Unique Cities" value={topCities.length} color={T.blueL}/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+          <StatCard label="Athletes" value={athletes.length} color={T.orange}/>
+          <StatCard label="Cities" value={topCities.length} color={T.blueL}/>
+          <StatCard label="States" value={uniqueStateCount} color={T.blueM}/>
         </div>
       </div>
 
-      {/* Heatmap color scale */}
+      {/* Color scale */}
       <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
         <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:7}}>Density Scale</div>
         <div style={{display:"flex",height:10,borderRadius:4,overflow:"hidden",marginBottom:5}}>
@@ -499,21 +667,63 @@ function HeatmapPanel({athletes}) {
         </div>
       </div>
 
-      <SectionHead>Top Recruit Cities</SectionHead>
-      {topCities.length === 0 ? (
-        <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>No athletes match current filters</div>
-      ) : topCities.map((c,i)=>(
-        <div key={c.city} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <span style={{color:i<3?T.orange:T.dim,fontSize:11,fontFamily:"monospace",minWidth:18,fontWeight:i<3?800:400}}>#{i+1}</span>
-            <span style={{color:T.offWhite,fontSize:12}}>{c.city}</span>
+      {/* Cities / States tab toggle */}
+      <div style={{display:"flex",background:T.bg,borderRadius:7,border:`1px solid ${T.border}`,overflow:"hidden",marginBottom:12}}>
+        {[["cities","🏙 Top Cities"],["states","🗺 Top States"]].map(([tab,lbl])=>(
+          <button key={tab} onClick={()=>setRankTab(tab)} style={{flex:1,padding:"7px 6px",background:rankTab===tab?T.orange:"transparent",border:"none",color:rankTab===tab?T.white:T.muted,fontSize:11,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.15s",fontWeight:rankTab===tab?700:400}}>{lbl}</button>
+        ))}
+      </div>
+
+      {/* Top Cities */}
+      {rankTab === "cities" && (
+        <>
+          <div style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:"0 10px",marginBottom:4,paddingBottom:5,borderBottom:`1px solid ${T.border}`}}>
+            <span style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>#</span>
+            <span style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>City</span>
+            <span style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",textAlign:"right"}}>Athletes</span>
           </div>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <div style={{height:4,borderRadius:2,background:T.orange,opacity:0.65,width:Math.max(6,Math.round(c.count/topCities[0].count*56))}}/>
-            <span style={{color:T.orange,fontSize:13,fontWeight:800,fontFamily:"monospace",minWidth:20,textAlign:"right"}}>{c.count}</span>
+          {topCities.length === 0 ? (
+            <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>No athletes match current filters</div>
+          ) : topCities.map((c,i)=>(
+            <div key={c.city} style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:"0 10px",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}44`}}>
+              <span style={{color:i<3?T.orange:T.dim,fontSize:11,fontFamily:"monospace",minWidth:20,fontWeight:i<3?800:400}}>#{i+1}</span>
+              <div>
+                <div style={{color:T.offWhite,fontSize:12}}>{c.city}</div>
+                <div style={{height:3,borderRadius:2,background:T.orange,opacity:0.5,marginTop:3,width:Math.max(6,Math.round(c.count/topCities[0].count*100))+'%'}}/>
+              </div>
+              <span style={{color:i<3?T.orange:T.offWhite,fontSize:13,fontWeight:800,fontFamily:"monospace",textAlign:"right"}}>{c.count}</span>
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* Top States */}
+      {rankTab === "states" && (
+        <>
+          <div style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto",gap:"0 8px",marginBottom:4,paddingBottom:5,borderBottom:`1px solid ${T.border}`}}>
+            <span style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>#</span>
+            <span style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>State</span>
+            <span style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",textAlign:"center"}}>Cities</span>
+            <span style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",textAlign:"right"}}>Athletes</span>
           </div>
-        </div>
-      ))}
+          {topStates.length === 0 ? (
+            <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>No athletes match current filters</div>
+          ) : topStates.map((s,i)=>(
+            <div key={s.abbr} style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto",gap:"0 8px",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}44`}}>
+              <span style={{color:i<3?T.orange:T.dim,fontSize:11,fontFamily:"monospace",minWidth:20,fontWeight:i<3?800:400}}>#{i+1}</span>
+              <div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{color:T.white,fontSize:10,fontWeight:800,fontFamily:"'Barlow Condensed',sans-serif",background:i<3?T.orange:T.border,borderRadius:3,padding:"1px 5px",letterSpacing:1}}>{s.abbr}</span>
+                  <span style={{color:T.offWhite,fontSize:12}}>{s.name}</span>
+                </div>
+                <div style={{height:3,borderRadius:2,background:T.orange,opacity:0.5,marginTop:3,width:Math.max(6,Math.round(s.count/topStates[0].count*100))+'%'}}/>
+              </div>
+              <span style={{color:T.muted,fontSize:10,textAlign:"center",fontFamily:"monospace"}}>{s.cityCount}</span>
+              <span style={{color:i<3?T.orange:T.offWhite,fontSize:13,fontWeight:800,fontFamily:"monospace",textAlign:"right"}}>{s.count}</span>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
@@ -851,12 +1061,13 @@ export default function App(){
   const [rightTab,setRightTab]=useState("athlete");
   const [focusedCollege,setFocusedCollege]=useState("");
   const [focusedHometown,setFocusedHometown]=useState("");
+  const [selectedStates,setSelectedStates]=useState([]);
   const [filters,setFilters]=useState({...BLANK_FILTERS});
   const [search,setSearch]=useState("");
 
   const filtered=useMemo(()=>applyFilters(ATHLETES,filters,search),[filters,search]);
   const overallAvg=useMemo(()=>filtered.length?Math.round(filtered.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/filtered.length):0,[filtered]);
-  const hasFilters=filters.events.length>0||filters.conference||filters.college||filters.hsYear||filters.collegeYear||search||filters.season!=="all";
+  const hasFilters=filters.events.length>0||filters.conference||filters.college||filters.hsYear||filters.collegeYear||search||filters.season!=="all"||selectedStates.length>0;
 
   const handleAthleteClick=a=>{setSelectedAthlete(s=>s?.id===a.id?null:a);setRightTab("athlete");};
   const handleFocusCollege=c=>{setFocusedCollege(c);if(c)setFocusedHometown("");};
@@ -880,7 +1091,7 @@ export default function App(){
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:34,height:34,borderRadius:7,background:`linear-gradient(135deg,${T.orange},${T.orangeD})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:19,boxShadow:`0 0 20px ${T.orangeGlow}`}}>⚡</div>
             <div>
-              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,fontWeight:900,letterSpacing:4,color:T.blueP,textTransform:"uppercase"}}>TrackScout</div>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,fontWeight:900,letterSpacing:4,color:T.blueP,textTransform:"uppercase"}}>Run Orange</div>
               <div style={{fontSize:9,color:T.muted,letterSpacing:3,textTransform:"uppercase",marginTop:-2}}>Recruiting Intelligence</div>
             </div>
           </div>
@@ -910,10 +1121,10 @@ export default function App(){
           <div style={{width:208,background:T.bgPanel,borderRight:`1px solid ${T.border}`,padding:"12px 11px",overflowY:"auto",flexShrink:0}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:11,letterSpacing:2,color:T.orange,textTransform:"uppercase"}}>Main Filters</span>
-              {hasFilters&&<button onClick={()=>{setFilters({...BLANK_FILTERS});setSearch("");}} style={{background:"none",border:"none",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CLEAR</button>}
+              {hasFilters&&<button onClick={()=>{setFilters({...BLANK_FILTERS});setSearch("");setSelectedStates([]);}} style={{background:"none",border:"none",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CLEAR</button>}
             </div>
 
-            <FilterControls filters={filters} setFilters={setFilters} showSeason={true}/>
+            <FilterControls filters={filters} setFilters={setFilters} showSeason={true} selectedStates={selectedStates} onStatesChange={setSelectedStates}/>
 
             <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:4}}>
               <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Athletes ({filtered.length})</div>
@@ -936,7 +1147,18 @@ export default function App(){
 
           {/* MAP */}
           <div style={{flex:1,position:"relative",overflow:"hidden"}}>
-            <USMap athletes={filtered} onAthleteClick={handleAthleteClick} selectedAthlete={selectedAthlete} highlightCollege={highlightCollege} highlightHometown={highlightHometown} mapMode={mapMode}/>
+            <USMap athletes={filtered} onAthleteClick={handleAthleteClick} selectedAthlete={selectedAthlete} highlightCollege={highlightCollege} highlightHometown={highlightHometown} mapMode={mapMode} selectedStates={selectedStates}/>
+
+            {/* Selected states indicator */}
+            {selectedStates.length>0 && mapMode!=="heatmap" && (
+              <div style={{position:"absolute",top:14,left:"50%",transform:"translateX(-50%)",background:"#FFFFFF",border:`2px solid ${T.orange}`,borderRadius:20,padding:"5px 16px",boxShadow:`0 2px 16px rgba(247,105,0,0.2)`,display:"flex",alignItems:"center",gap:10,zIndex:10,whiteSpace:"nowrap"}}>
+                <div style={{width:7,height:7,borderRadius:"50%",background:T.orange}}/>
+                <span style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:800,letterSpacing:1}}>
+                  {selectedStates.length===1?STATE_NAMES[selectedStates[0]]:selectedStates.length+" States"} · {filtered.filter(a=>selectedStates.includes(getState(a.hometown))).length} athletes
+                </span>
+                <button onClick={()=>setSelectedStates([])} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,borderRadius:10,cursor:"pointer",fontSize:10,padding:"1px 7px",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>✕ Clear</button>
+              </div>
+            )}
 
             {/* Legend */}
             <div style={{position:"absolute",bottom:14,left:14,background:"rgba(255,255,255,0.96)",border:`1px solid ${T.border}`,borderRadius:9,padding:"9px 13px",boxShadow:`0 2px 16px rgba(0,0,0,0.10)`}}>
@@ -961,6 +1183,7 @@ export default function App(){
                     <div style={{display:"flex",gap:5,alignItems:"center"}}><div style={{width:7,height:7,borderRadius:"50%",background:T.muted}}/><span style={{color:T.muted,fontSize:10}}>● Hometown</span></div>
                     <div style={{display:"flex",gap:5,alignItems:"center"}}><div style={{width:7,height:7,background:T.muted,borderRadius:1}}/><span style={{color:T.muted,fontSize:10}}>▪ College</span></div>
                   </div>
+                  <div style={{marginTop:6,color:T.dim,fontSize:9,fontStyle:"italic"}}>Filter by state using the left panel</div>
                 </div>
               ):(
                 <div style={{display:"flex",gap:12,alignItems:"center"}}>
