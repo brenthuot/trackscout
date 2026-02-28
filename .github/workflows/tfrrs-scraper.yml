@@ -1,0 +1,104 @@
+name: TFRRS Scraper
+
+on:
+  # Run automatically every night at 2am UTC
+  schedule:
+    - cron: "0 2 * * *"
+
+  # Also allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you running this manually?"
+        required: false
+        default: "Manual backfill run"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300  # 5-hour limit (GitHub max is 6)
+
+    steps:
+      # 1. Check out your repo code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Set up Python
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "scraper/requirements.txt"
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scraper/requirements.txt
+
+      # 4. Run the scraper
+      - name: Run TFRRS scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          cd scraper
+          python tfrrs_scraper.py
+
+      # 5. Print summary on success
+      - name: Scraper completed
+        if: success()
+        run: echo "✅ Scraper finished successfully"
+
+      # 6. Alert on failure
+      - name: Scraper failed
+        if: failure()
+        run: echo "❌ Scraper failed — check logs above"
+```
+
+Commit changes.
+
+---
+
+## Step 6 — Verify Your File Structure
+
+Your repo should now look like this:
+```
+trackscout/
+├── .github/
+│   └── workflows/
+│       └── tfrrs-scraper.yml
+├── scraper/
+│   ├── tfrrs_scraper.py
+│   └── requirements.txt
+├── src/
+│   ├── App.jsx
+│   ├── main.jsx
+│   └── index.css
+├── index.html
+├── package.json
+└── vite.config.js
+```
+
+---
+
+## Step 7 — Run It Manually (First Test)
+
+Don't wait for 2am — trigger it now to confirm it works.
+
+1. In your GitHub repo → click the **Actions** tab (top navigation)
+2. In the left sidebar you'll see **TFRRS Scraper** — click it
+3. Click the **Run workflow** dropdown button (right side)
+4. Leave the reason field as-is → click **Run workflow**
+5. A new row appears — click it to watch the live logs
+
+You'll see output like:
+```
+Run Stats TFRRS Scraper starting
+Backfill years: [2019, 2020, 2021, 2022, 2023, 2024, 2025]
+Fetching team page: https://www.tfrrs.org/teams/college/2024/Alabama.html
+  Found 28 athletes for Alabama 2024
+  Scraping athlete: Marcus Johnson — https://www.tfrrs.org/athletes/8234512
+    → 14 performances across 3 events
+    ✓ Saved Marcus Johnson (14 perfs)
