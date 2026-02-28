@@ -66,29 +66,67 @@ const EVENTS_CFG = [
   {id:"XC",     label:"Cross Country", season:"outdoor"},
 ];
 
-// ── CONFERENCE / COLLEGE DATA ─────────────────────────────────────────────────
-const CONF_DATA = {
-  "SEC":     { colleges:["Alabama","Arkansas","Auburn","Florida","Georgia","Kentucky","LSU","Mississippi State","Missouri","Ole Miss","South Carolina","Tennessee","Texas A&M","Vanderbilt"],
-               coords:{Alabama:[33.211,-87.535],Arkansas:[36.068,-94.174],Auburn:[32.603,-85.481],Florida:[29.651,-82.325],Georgia:[33.958,-83.376],Kentucky:[38.029,-84.504],LSU:[30.413,-91.180],"Mississippi State":[33.456,-88.789],Missouri:[38.952,-92.328],"Ole Miss":[34.365,-89.538],"South Carolina":[33.996,-81.027],Tennessee:[35.955,-83.923],"Texas A&M":[30.618,-96.340],Vanderbilt:[36.144,-86.803]} },
-  "Big Ten": { colleges:["Illinois","Indiana","Iowa","Maryland","Michigan","Michigan State","Minnesota","Nebraska","Northwestern","Ohio State","Penn State","Purdue","Rutgers","Wisconsin"],
-               coords:{Illinois:[40.102,-88.228],Indiana:[39.165,-86.526],Iowa:[41.661,-91.534],Maryland:[38.986,-76.943],Michigan:[42.278,-83.738],"Michigan State":[42.731,-84.481],Minnesota:[44.974,-93.228],Nebraska:[40.820,-96.706],Northwestern:[42.055,-87.675],"Ohio State":[40.006,-83.021],"Penn State":[40.797,-77.860],Purdue:[40.425,-86.913],Rutgers:[40.500,-74.450],Wisconsin:[43.076,-89.412]} },
-  "ACC":     { colleges:["Boston College","Clemson","Duke","Florida State","Georgia Tech","Louisville","Miami","NC State","North Carolina","Notre Dame","Pittsburgh","Syracuse","Virginia","Virginia Tech","Wake Forest"],
-               coords:{"Boston College":[42.337,-71.168],Clemson:[34.677,-82.837],Duke:[36.001,-78.939],"Florida State":[30.441,-84.298],"Georgia Tech":[33.776,-84.396],Louisville:[38.211,-85.758],Miami:[25.756,-80.371],"NC State":[35.786,-78.686],"North Carolina":[35.905,-79.047],"Notre Dame":[41.701,-86.238],Pittsburgh:[40.444,-79.960],Syracuse:[43.036,-76.134],Virginia:[38.033,-78.508],"Virginia Tech":[37.228,-80.421],"Wake Forest":[36.134,-80.274]} },
-  "Big 12":  { colleges:["Baylor","BYU","Iowa State","Kansas","Kansas State","Oklahoma State","TCU","Texas","Texas Tech","West Virginia"],
-               coords:{Baylor:[31.548,-97.116],BYU:[40.252,-111.649],"Iowa State":[42.026,-93.648],Kansas:[38.971,-95.253],"Kansas State":[39.191,-96.578],"Oklahoma State":[36.127,-97.068],TCU:[32.710,-97.363],Texas:[30.284,-97.735],"Texas Tech":[33.584,-101.875],"West Virginia":[39.635,-79.954]} },
-  "Pac-12":  { colleges:["Arizona","Arizona State","California","Colorado","Oregon","Oregon State","Stanford","UCLA","USC","Utah","Washington","Washington State"],
-               coords:{Arizona:[32.232,-110.953],"Arizona State":[33.424,-111.928],California:[37.872,-122.260],Colorado:[40.007,-105.266],Oregon:[44.045,-123.073],"Oregon State":[44.564,-123.278],Stanford:[37.427,-122.170],UCLA:[34.068,-118.445],USC:[34.022,-118.285],Utah:[40.762,-111.836],Washington:[47.655,-122.303],"Washington State":[46.730,-117.158]} },
-  "Big East": { colleges:["Butler","Connecticut","Georgetown","Marquette","Providence","Seton Hall","Villanova"],
-                coords:{Butler:[39.839,-86.172],Connecticut:[41.808,-72.253],Georgetown:[38.907,-77.072],Marquette:[43.038,-87.930],Providence:[41.826,-71.403],"Seton Hall":[40.746,-74.236],Villanova:[40.036,-75.343]} },
+// Built dynamically from real athlete data
+const getCollegeCoords = (college) => {
+  const coords = {
+    "Alabama":[33.211,-87.535],"Arkansas":[36.068,-94.174],"Auburn":[32.603,-85.481],
+    "Florida":[29.651,-82.325],"Georgia":[33.958,-83.376],"Kentucky":[38.029,-84.504],
+    "LSU":[30.413,-91.180],"Mississippi State":[33.456,-88.789],"Missouri":[38.952,-92.328],
+    "Ole Miss":[34.365,-89.538],"South Carolina":[33.996,-81.027],"Tennessee":[35.955,-83.923],
+    "Texas A&M":[30.618,-96.340],"Vanderbilt":[36.144,-86.803],
+    "Illinois":[40.102,-88.228],"Indiana":[39.165,-86.526],"Iowa":[41.661,-91.534],
+    "Maryland":[38.986,-76.943],"Michigan":[42.278,-83.738],"Michigan State":[42.731,-84.481],
+    "Minnesota":[44.974,-93.228],"Nebraska":[40.820,-96.706],"Northwestern":[42.055,-87.675],
+    "Ohio State":[40.006,-83.021],"Penn State":[40.797,-77.860],"Purdue":[40.425,-86.913],
+    "Rutgers":[40.500,-74.450],"Wisconsin":[43.076,-89.412],
+    "Boston College":[42.337,-71.168],"Clemson":[34.677,-82.837],"Duke":[36.001,-78.939],
+    "Florida State":[30.441,-84.298],"Georgia Tech":[33.776,-84.396],"Louisville":[38.211,-85.758],
+    "Miami":[25.756,-80.371],"Miami (FL)":[25.756,-80.371],"NC State":[35.786,-78.686],
+    "North Carolina":[35.905,-79.047],"Notre Dame":[41.701,-86.238],"Pittsburgh":[40.444,-79.960],
+    "Syracuse":[43.036,-76.134],"Virginia":[38.033,-78.508],"Virginia Tech":[37.228,-80.421],
+    "Wake Forest":[36.134,-80.274],
+    "Baylor":[31.548,-97.116],"BYU":[40.252,-111.649],"Iowa State":[42.026,-93.648],
+    "Kansas":[38.971,-95.253],"Kansas State":[39.191,-96.578],"Oklahoma State":[36.127,-97.068],
+    "TCU":[32.710,-97.363],"Texas":[30.284,-97.735],"Texas Tech":[33.584,-101.875],
+    "West Virginia":[39.635,-79.954],
+    "Arizona":[32.232,-110.953],"Arizona State":[33.424,-111.928],"Cal":[37.872,-122.260],
+    "California":[37.872,-122.260],"Colorado":[40.007,-105.266],"Oregon":[44.045,-123.073],
+    "Oregon State":[44.564,-123.278],"Stanford":[37.427,-122.170],"UCLA":[34.068,-118.445],
+    "USC":[34.022,-118.285],"Utah":[40.762,-111.836],"Washington":[47.655,-122.303],
+    "Washington State":[46.730,-117.158],
+    "Brown":[41.826,-71.403],"Columbia":[40.808,-73.962],"Cornell":[42.453,-76.473],
+    "Dartmouth":[43.705,-72.288],"Harvard":[42.377,-71.117],"Penn":[39.952,-75.193],
+    "Princeton":[40.343,-74.651],"Yale":[41.316,-72.923],
+    "Butler":[39.839,-86.172],"UConn":[41.808,-72.253],"Connecticut":[41.808,-72.253],
+    "Georgetown":[38.907,-77.072],"Marquette":[43.038,-87.930],"Providence":[41.826,-71.403],
+    "Seton Hall":[40.746,-74.236],"Villanova":[40.036,-75.343],"DePaul":[41.931,-87.654],
+    "Creighton":[41.258,-95.943],"St. John's":[40.723,-73.794],"Xavier":[39.147,-84.472],
+    "Air Force":[38.997,-104.861],"Boise State":[43.602,-116.199],"Colorado State":[40.574,-105.085],
+    "Fresno State":[36.812,-119.748],"Hawaii":[21.297,-157.817],"Nevada":[39.547,-119.816],
+    "New Mexico":[35.084,-106.620],"San Diego State":[32.776,-117.071],"San Jose State":[37.335,-121.881],
+    "UNLV":[36.108,-115.142],"Utah State":[41.742,-111.810],"Wyoming":[41.314,-105.576],
+    "Eastern Washington":[47.673,-117.401],"Idaho":[46.726,-117.008],"Idaho State":[42.861,-112.431],
+    "Montana":[46.861,-113.985],"Montana State":[45.670,-111.047],"Northern Arizona":[35.184,-111.657],
+    "Northern Colorado":[40.406,-104.700],"Portland State":[45.511,-122.683],
+    "Sacramento State":[38.561,-121.423],"Southern Utah":[37.677,-113.061],"Weber State":[41.195,-111.973],
+    "East Carolina":[35.607,-77.366],"Florida Atlantic":[26.370,-80.103],"Memphis":[35.118,-89.938],
+    "North Texas":[33.208,-97.147],"Rice":[29.717,-95.403],"South Florida":[28.061,-82.414],
+    "Temple":[39.981,-75.155],"Tulane":[29.939,-90.121],"Tulsa":[36.151,-95.947],
+    "UAB":[33.502,-86.808],"UTSA":[29.576,-98.614],"Wichita State":[37.719,-97.295],
+    "Davidson":[35.499,-80.849],"Dayton":[39.740,-84.183],"Duquesne":[40.436,-79.992],
+    "Fordham":[40.862,-73.884],"George Mason":[38.832,-77.308],"George Washington":[38.900,-77.048],
+    "UMass":[42.391,-72.526],"Rhode Island":[41.484,-71.526],"Richmond":[37.574,-77.540],
+    "Saint Louis":[38.637,-90.235],"St. Bonaventure":[42.079,-78.471],"VCU":[37.549,-77.453],
+    "Gonzaga":[47.667,-117.402],"Loyola Marymount":[33.970,-118.416],"Pepperdine":[34.035,-118.710],
+    "Portland":[45.557,-122.676],"Saint Mary's":[37.837,-122.115],"San Diego":[32.771,-117.192],
+    "San Francisco":[37.776,-122.451],"Santa Clara":[37.349,-121.939],
+  };
+  return coords[college] || [39.5, -98.35];
 };
-const ALL_CONFERENCES = Object.keys(CONF_DATA);
-const getConfColleges = (conf) => conf ? (CONF_DATA[conf]?.colleges ?? []) : ALL_CONFERENCES.flatMap(c => CONF_DATA[c].colleges).sort();
-const getCollegeCoords = (college, conf) => {
-  const search = conf ? [CONF_DATA[conf]] : Object.values(CONF_DATA);
-  for (const d of search) if (d.coords[college]) return d.coords[college];
-  return [39.5, -98.35];
+const getCollegeConf = (college, athletes=[]) => {
+  for (const a of athletes) { if (a.college === college) return a.conference; }
+  return "";
 };
-const getCollegeConf = (college) => { for (const [c,d] of Object.entries(CONF_DATA)) if (d.colleges.includes(college)) return c; return ""; };
 
 // ── CITIES ─────────────────────────────────────────────────────────────────────
 const CITIES = [
