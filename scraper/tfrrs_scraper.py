@@ -459,8 +459,9 @@ def run_scraper():
             soup = BeautifulSoup(resp.text, "lxml")
 
             # Collect athlete links from roster
-            # Current academic season: 2025–26, so a 1st-year enrolled in fall 2025
-            # graduated HS in spring 2025. Formula: hs_grad_year = 2026 - college_year
+            # Current academic season: 2025–26
+            # Formula: hs_grad_year = 2026 - college_year
+            # e.g. SR-4 → college_year=4, hs_grad_year=2022
             SEASON_YEAR = 2026
             athlete_links = []
             seen_urls = set()
@@ -473,23 +474,37 @@ def run_scraper():
                 if full_url not in seen_urls:
                     seen_urls.add(full_url)
 
-                    # Parse class tag like (SR-4), (JR-3), (SO-2), (FR-1), (RS/Una), (5th-5)
-                    class_match = re.search(r'\(([^)]+)\)\s*$', name_raw)
-                    class_str = class_match.group(1).strip() if class_match else ""
-
-                    # Strip the class tag from the name and title-case it
+                    # Clean name — strip any class tag if it happened to be in link text
                     name_clean = re.sub(r'\s*\([^)]+\)\s*$', '', name_raw).strip()
                     name_clean = " ".join(w.capitalize() for w in name_clean.split())
 
-                    # Derive college_year from the trailing digit (SR-4 → 4, JR-3 → 3, etc.)
+                    # The class tag (SR-4, JR-3, etc.) is usually in a sibling <td>,
+                    # not inside the <a> tag itself. Search the whole parent row.
                     college_year = None
                     hs_grad_year = None
-                    yr_digit = re.search(r'(\d+)\s*$', class_str)
-                    if yr_digit:
-                        college_year = int(yr_digit.group(1))
-                        if 1 <= college_year <= 6:
-                            # A 1st-year in 2025-26 season graduated HS in spring 2025
-                            hs_grad_year = SEASON_YEAR - college_year
+
+                    # Walk up to the nearest <tr> and grab all text from it
+                    row = link.find_parent("tr")
+                    row_text = row.get_text(" ", strip=True) if row else name_raw
+
+                    # Match patterns like: SR-4, JR-3, SO-2, FR-1, 5th-5, Grad-5
+                    # Also plain year numbers standing alone: "4" "3" "2" "1"
+                    class_match = re.search(
+                        r'\b(?:SR|JR|SO|FR|Grad|5th|6th)-(\d)\b'
+                        r'|\((?:SR|JR|SO|FR|Grad|RS)[^\)]*-(\d)\)',
+                        row_text, re.IGNORECASE
+                    )
+                    if class_match:
+                        digit = class_match.group(1) or class_match.group(2)
+                        college_year = int(digit)
+                    else:
+                        # Fallback: look for a standalone digit 1-6 in parentheses e.g. (4)
+                        fallback = re.search(r'\(([1-6])\)', row_text)
+                        if fallback:
+                            college_year = int(fallback.group(1))
+
+                    if college_year and 1 <= college_year <= 6:
+                        hs_grad_year = SEASON_YEAR - college_year
 
                     athlete_links.append({
                         "url": full_url,
