@@ -286,13 +286,21 @@ def scrape_athlete(info: dict) -> dict | None:
     if not soup:
         return None
 
-    # Name
-    name = info["name"]
+    # Name — prefer the cleaned name from the roster; fall back to page header
+    name = info["name"]  # already stripped and title-cased from roster
     for tag in soup.find_all(["h1", "h2", "h3"]):
         t = tag.get_text(strip=True)
-        if len(t) > 3 and len(t) < 60 and not any(x in t.lower() for x in ["tfrrs", "track", "field"]):
-            name = t.split("|")[0].strip()
+        if len(t) > 3 and len(t) < 80 and not any(x in t.lower() for x in ["tfrrs", "track", "field"]):
+            # Strip any trailing class tag that TFRRS puts on the page header too
+            cleaned = re.sub(r'\s*\([^)]+\)\s*$', '', t).strip()
+            cleaned = cleaned.split("|")[0].strip()
+            if cleaned:
+                name = " ".join(w.capitalize() for w in cleaned.split())
             break
+
+    # college_year and hs_grad_year come from the roster link — no need to scrape
+    college_year = info.get("college_year")
+    hs_grad_year = info.get("hs_grad_year")
 
     # College & hometown
     college = info.get("college", "")
@@ -305,14 +313,6 @@ def scrape_athlete(info: dict) -> dict | None:
         if m and len(m.group(1)) > 2:
             hometown = text.strip()
             hometown_state = m.group(2)
-            break
-
-    # HS grad year
-    hs_year = None
-    for text in soup.find_all(string=re.compile(r"\b20(1[5-9]|2[0-6])\b")):
-        m = re.search(r"\b(20(?:1[5-9]|2[0-6]))\b", str(text))
-        if m:
-            hs_year = int(m.group(1))
             break
 
     # Performances
@@ -366,7 +366,7 @@ def scrape_athlete(info: dict) -> dict | None:
                         })
                         events_set.add(event_norm)
 
-    log.info(f"    {name} ({info.get('gender','')}) — {len(performances)} perfs")
+    log.info(f"    {name} ({info.get('gender','')}) Y{college_year or '?'} HS:{hs_grad_year or '?'} — {len(performances)} perfs")
 
     return {
         "id": f"tfrrs_{tfrrs_id}",
@@ -377,7 +377,8 @@ def scrape_athlete(info: dict) -> dict | None:
         "conference": info.get("conference", ""),
         "hometown": hometown,
         "hometown_state": hometown_state,
-        "hs_grad_year": hs_year,
+        "hs_grad_year": hs_grad_year,
+        "college_year": college_year,
         "gender": info.get("gender", "M"),
         "events": list(events_set),
         "tfrrs_url": url,
@@ -458,22 +459,46 @@ def run_scraper():
             soup = BeautifulSoup(resp.text, "lxml")
 
             # Collect athlete links from roster
+            # Current academic season: 2025–26, so a 1st-year enrolled in fall 2025
+            # graduated HS in spring 2025. Formula: hs_grad_year = 2026 - college_year
+            SEASON_YEAR = 2026
             athlete_links = []
             seen_urls = set()
             for link in soup.find_all("a", href=re.compile(r"/athletes/\d+")):
                 href = link.get("href", "")
-                name = link.get_text(strip=True)
-                if not name or len(name) < 3:
+                name_raw = link.get_text(strip=True)
+                if not name_raw or len(name_raw) < 3:
                     continue
                 full_url = href if href.startswith("http") else BASE_URL + href
                 if full_url not in seen_urls:
                     seen_urls.add(full_url)
+
+                    # Parse class tag like (SR-4), (JR-3), (SO-2), (FR-1), (RS/Una), (5th-5)
+                    class_match = re.search(r'\(([^)]+)\)\s*$', name_raw)
+                    class_str = class_match.group(1).strip() if class_match else ""
+
+                    # Strip the class tag from the name and title-case it
+                    name_clean = re.sub(r'\s*\([^)]+\)\s*$', '', name_raw).strip()
+                    name_clean = " ".join(w.capitalize() for w in name_clean.split())
+
+                    # Derive college_year from the trailing digit (SR-4 → 4, JR-3 → 3, etc.)
+                    college_year = None
+                    hs_grad_year = None
+                    yr_digit = re.search(r'(\d+)\s*$', class_str)
+                    if yr_digit:
+                        college_year = int(yr_digit.group(1))
+                        if 1 <= college_year <= 6:
+                            # A 1st-year in 2025-26 season graduated HS in spring 2025
+                            hs_grad_year = SEASON_YEAR - college_year
+
                     athlete_links.append({
                         "url": full_url,
-                        "name": name,
+                        "name": name_clean,
                         "college": school,
                         "conference": conference,
                         "gender": "M" if gender_code == "m" else "F",
+                        "college_year": college_year,
+                        "hs_grad_year": hs_grad_year,
                     })
 
             log.info(f"  Found {len(athlete_links)} {gender_label} athletes at {school}")
