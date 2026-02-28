@@ -231,8 +231,7 @@ EVENT_MAP = {
     "Pole Vault": "PV", "Shot Put": "SP", "Discus": "DT",
     "Hammer": "HT", "Javelin": "JT", "Weight Throw": "WT",
     "Heptathlon": "Hept", "Decathlon": "Dec",
-    "4x100": "4x100", "4 x 100": "4x100",
-    "4x400": "4x400", "4 x 400": "4x400",
+    # Relays intentionally excluded — we don't track relay splits per individual
 }
 
 GENDERS = [("m", "Men"), ("f", "Women")]
@@ -298,22 +297,74 @@ def scrape_athlete(info: dict) -> dict | None:
                 name = " ".join(w.capitalize() for w in cleaned.split())
             break
 
-    # college_year and hs_grad_year come from the roster link — no need to scrape
+    # college_year and hs_grad_year — use roster values, but if missing try page
     college_year = info.get("college_year")
     hs_grad_year = info.get("hs_grad_year")
+    SEASON_YEAR = 2026
+
+    # If roster didn't give us college_year, scan the athlete page header/bio area
+    if college_year is None:
+        CLASS_MAP = {"fr": 1, "so": 2, "jr": 3, "sr": 4, "grad": 5, "5th": 5, "6th": 6}
+        page_text = soup.get_text(" ")
+        # Try "SR-4", "JR-3" style first
+        m = re.search(r'\b(?:SR|JR|SO|FR|Grad|5th|6th)-(\d)\b', page_text, re.IGNORECASE)
+        if m:
+            college_year = int(m.group(1))
+        else:
+            # Try standalone class word: "Senior", "Junior", "Sophomore", "Freshman"
+            m = re.search(
+                r'\b(Senior|Junior|Sophomore|Freshman|Graduate|5th Year|6th Year)\b',
+                page_text, re.IGNORECASE
+            )
+            if m:
+                word = m.group(1).lower().split()[0]
+                word_map = {"senior": 4, "junior": 3, "sophomore": 2, "freshman": 1, "graduate": 5}
+                college_year = word_map.get(word)
+            else:
+                # Try bare abbreviation in a small text block: "SR", "JR", "SO", "FR"
+                m = re.search(r'\b(SR|JR|SO|FR)\b', page_text[:2000])
+                if m:
+                    college_year = CLASS_MAP.get(m.group(1).lower())
+        if college_year and 1 <= college_year <= 6 and hs_grad_year is None:
+            hs_grad_year = SEASON_YEAR - college_year
 
     # College & hometown
     college = info.get("college", "")
     hometown = ""
     hometown_state = ""
 
-    # Try to find hometown in page metadata
+    # Hometown: TFRRS usually has "City, ST" somewhere in the bio section.
+    # Use a broad pattern — allow letters, spaces, hyphens, apostrophes, periods, numbers.
+    # Match "Anything, XX" where XX is a 2-letter US state abbreviation.
+    US_STATES = {
+        "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
+        "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+        "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
+        "VA","WA","WV","WI","WY","DC",
+    }
+    # First pass: look for "City, ST" pattern in all text nodes
     for text in soup.stripped_strings:
-        m = re.match(r"^([A-Za-z\s\-]+),\s+([A-Z]{2})$", text.strip())
-        if m and len(m.group(1)) > 2:
-            hometown = text.strip()
-            hometown_state = m.group(2)
-            break
+        t = text.strip()
+        # Pattern: one or more words (allowing . ' -), comma, space, 2 uppercase letters
+        m = re.match(r'^([\w\s\.\'\-]{2,40}),\s+([A-Z]{2})$', t)
+        if m:
+            city, state = m.group(1).strip(), m.group(2)
+            if state in US_STATES and len(city) >= 2:
+                hometown = t
+                hometown_state = state
+                break
+
+    # Second pass: look in <li>, <dd>, <td> elements for inline "City, ST" patterns
+    if not hometown:
+        for tag in soup.find_all(["li", "dd", "td", "span", "p"]):
+            t = tag.get_text(strip=True)
+            m = re.search(r'([\w\s\.\'\-]{2,40}),\s+([A-Z]{2})\b', t)
+            if m:
+                city, state = m.group(1).strip(), m.group(2)
+                if state in US_STATES and len(city) >= 2:
+                    hometown = f"{city}, {state}"
+                    hometown_state = state
+                    break
 
     # Performances
     performances = []
