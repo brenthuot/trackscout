@@ -40,9 +40,6 @@ RATE_LIMIT_SECONDS = 2.0   # be respectful — 1 request every 2 seconds
 MAX_ATHLETES_PER_RUN = 300 # keep each run under GitHub's 6-hour limit
 BACKFILL_YEARS = [2019, 2020, 2021, 2022, 2023, 2024, 2025]
 
-# ── CONFERENCES AND TEAMS ─────────────────────────────────────────────────────
-# TFRRS team keys — these are the school identifiers used in TFRRS URLs
-# Format: https://www.tfrrs.org/teams/college/{year}/{key}.html
 CONFERENCE_TEAMS = {
     "SEC": [
         "Alabama", "Arkansas", "Auburn", "Florida", "Georgia",
@@ -63,6 +60,46 @@ CONFERENCE_TEAMS = {
     "Big_12": [
         "Baylor", "BYU", "Iowa_State", "Kansas", "Kansas_State",
         "Oklahoma_State", "TCU", "Texas", "Texas_Tech", "West_Virginia"
+    ],
+    "Pac_12": [
+        "Arizona", "Arizona_State", "California", "Colorado",
+        "Oregon", "Oregon_State", "Stanford", "UCLA",
+        "USC", "Utah", "Washington", "Washington_State"
+    ],
+    "West_Coast": [
+        "BYU", "Gonzaga", "Loyola_Marymount", "Pacific",
+        "Pepperdine", "Portland", "Saint_Marys_CA", "San_Diego",
+        "San_Francisco", "Santa_Clara"
+    ],
+    "Ivy_League": [
+        "Brown", "Columbia", "Cornell", "Dartmouth",
+        "Harvard", "Penn", "Princeton", "Yale"
+    ],
+    "Big_East": [
+        "Butler", "Creighton", "DePaul", "Georgetown",
+        "Marquette", "Providence", "Seton_Hall", "St_Johns",
+        "Villanova", "Xavier", "Connecticut", "UConn"
+    ],
+    "Mountain_West": [
+        "Air_Force", "Boise_State", "Colorado_State", "Fresno_State",
+        "Hawaii", "Nevada", "New_Mexico", "San_Diego_State",
+        "San_Jose_State", "UNLV", "Utah_State", "Wyoming"
+    ],
+    "Big_Sky": [
+        "Cal_Poly", "Eastern_Washington", "Idaho", "Idaho_State",
+        "Montana", "Montana_State", "Northern_Arizona", "Northern_Colorado",
+        "Portland_State", "Sacramento_State", "Southern_Utah", "Weber_State"
+    ],
+    "American": [
+        "Charlotte", "East_Carolina", "Florida_Atlantic", "Memphis",
+        "North_Texas", "Rice", "South_Florida", "Temple",
+        "Tulane", "Tulsa", "UAB", "UTSA", "Wichita_State"
+    ],
+    "Atlantic_10": [
+        "Davidson", "Dayton", "Duquesne", "Fordham",
+        "George_Mason", "George_Washington", "La_Salle", "Massachusetts",
+        "Rhode_Island", "Richmond", "Saint_Louis", "St_Bonaventure",
+        "VCU"
     ],
 }
 
