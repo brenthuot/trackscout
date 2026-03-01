@@ -1,0 +1,41 @@
+name: Scrape TFRRS
+
+on:
+  workflow_dispatch:          # manual trigger from Actions tab
+  schedule:
+    - cron: "0 6 * * 1"      # every Monday at 6am UTC (weekly refresh)
+
+jobs:
+  scrape:
+    name: "Group ${{ matrix.group }}"
+    runs-on: ubuntu-latest
+    # Each matrix job gets its own runner = its own IP = no shared rate limiting
+    strategy:
+      fail-fast: false        # if one group fails, others keep running
+      matrix:
+        group: ["1", "2", "3", "4", "5", "6"]
+        # Group 1: SEC + Big Ten      (~2,400 athletes)
+        # Group 2: ACC + Big 12       (~2,100 athletes)
+        # Group 3: Pac-12 + Ivy + Big East (~2,500 athletes)
+        # Group 4: Mountain West + Big Sky (~1,800 athletes)
+        # Group 5: American + Atlantic 10  (~1,900 athletes)
+        # Group 6: West Coast              (~600 athletes)
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 lxml supabase
+
+      - name: Run scraper — Group ${{ matrix.group }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python tfrrs_scraper.py --group ${{ matrix.group }}
