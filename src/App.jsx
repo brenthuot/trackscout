@@ -55,6 +55,10 @@ const EVENTS_CFG = [
   {id:"Hept",   label:"Heptathlon",    season:"outdoor"},
 ];
 
+// Field events: higher mark = better
+const FIELD_EVENTS = new Set(["LJ","TJ","HJ","PV","SP","DT","HT","JT","WT","Hept","Dec","Pent"]);
+const isFieldEvent = e => FIELD_EVENTS.has(e);
+
 // ── COLLEGE COORDINATES ───────────────────────────────────────────────────────
 const COLLEGE_COORDS = {
   // SEC
@@ -162,14 +166,15 @@ const getState = (hometown) => {
 };
 
 // ── HOMETOWN COORDINATE RESOLVER ──────────────────────────────────────────────
+// Returns null if no real hometown — callers use this to skip rendering
 function resolveHometownCoords(hometown) {
-  if (!hometown) return [39.5, -98.35];
+  if (!hometown) return null;
   const parts = hometown.split(", ");
   if (parts.length >= 2) {
     const state = parts[parts.length - 1].trim().toUpperCase().slice(0, 2);
     if (STATE_CAPITALS[state]) return STATE_CAPITALS[state];
   }
-  return [39.5, -98.35];
+  return null; // unknown format — don't fake it
 }
 
 // ── SUPABASE DATA TRANSFORMER ─────────────────────────────────────────────────
@@ -179,26 +184,37 @@ function transformAthlete(raw, index) {
   const perfs = raw.performances || [];
   const collegeTimes = {};
   const hsTimes = {};
+  const rawPerformances = [];
   perfs.forEach(p => {
     if (!p.mark || !p.event) return;
-    if (RELAY_EVENTS.has(p.event)) return; // skip relays
+    if (RELAY_EVENTS.has(p.event)) return;
+    rawPerformances.push(p);
     const bucket = p.level === "hs" ? hsTimes : collegeTimes;
-    if (!bucket[p.event] || p.mark < bucket[p.event]) bucket[p.event] = p.mark;
+    const isBetter = isFieldEvent(p.event)
+      ? (!bucket[p.event] || p.mark > bucket[p.event])
+      : (!bucket[p.event] || p.mark < bucket[p.event]);
+    if (isBetter) bucket[p.event] = p.mark;
   });
   const college = raw.college || "Unknown";
-  // Filter relay/XC events from the events array too
   const events = (raw.events || []).filter(e => !RELAY_EVENTS.has(e));
+
+  // Only use hometown if it's a real "City, ST" value
+  const hometown = raw.hometown || "";
+  const hometownCoords = resolveHometownCoords(hometown);
+
   return {
     id: raw.id || `idx_${index}`,
     name: raw.name || "Unknown",
-    hometown: raw.hometown || (raw.hometown_state ? `Unknown, ${raw.hometown_state}` : ""),
-    hometownCoords: resolveHometownCoords(raw.hometown || (raw.hometown_state ? `, ${raw.hometown_state}` : "")),
+    hometown,
+    hometownCoords,             // null means no real data — map will skip this athlete
+    hasHometown: !!hometownCoords,
     hsName: raw.high_school || "",
     college,
     conference: raw.conference || "",
     events,
     hsTimes,
     collegeTimes,
+    rawPerformances,
     hsYear: raw.hs_grad_year || null,
     collegeYear: raw.college_year || null,
     gender: raw.gender || "M",
@@ -212,12 +228,12 @@ const COLLEGE_YEARS = [1, 2, 3, 4];
 const ALL_STATE_ABBRS = Object.keys(STATE_NAMES).sort((a, b) => STATE_NAMES[a].localeCompare(STATE_NAMES[b]));
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
-const haversine = ([a,b],[c,d]) => { const R=3958.8,dL=(c-a)*Math.PI/180,dl=(d-b)*Math.PI/180,x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dl/2)**2; return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); };
-const fmtDist = d => `${Math.round(d).toLocaleString()} mi`;
+const haversine = (p1,p2) => { if(!p1||!p2) return 0; const [a,b]=p1,[c,d]=p2,R=3958.8,dL=(c-a)*Math.PI/180,dl=(d-b)*Math.PI/180,x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dl/2)**2; return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x)); };
+const fmtDist = d => d ? `${Math.round(d).toLocaleString()} mi` : "—";
 const fmtTime = v => { if (!v) return "—"; if (v > 200) { const m=Math.floor(v/60); return `${m}:${(v%60).toFixed(2).padStart(5,"0")}`; } return v.toFixed(2); };
 const distBucket = d => d<100?"local":d<400?"regional":d<800?"far":"extreme";
-const distColor = d => d<100?T.green:d<400?T.yellow:d<800?T.orange:T.red;
-const distLabel = d => d<100?"Local (<100 mi)":d<400?"Regional (100-400 mi)":d<800?"Long Haul (400-800 mi)":"Cross-Country (800+ mi)";
+const distColor = d => !d ? T.dim : d<100?T.green:d<400?T.yellow:d<800?T.orange:T.red;
+const distLabel = d => !d ? "Unknown" : d<100?"Local (<100 mi)":d<400?"Regional (100-400 mi)":d<800?"Long Haul (400-800 mi)":"Cross-Country (800+ mi)";
 
 // ── HEATMAP CANVAS ────────────────────────────────────────────────────────────
 function drawHeatmap(canvas, athletes, projection) {
@@ -317,6 +333,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
       });
       active.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
+        if(!a.hometownCoords) return;
         const dist=haversine(a.hometownCoords,a.collegeCoords), col=distColor(dist), isSel=selectedAthlete?.id===a.id;
         const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.55;
         const arc=`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`;
@@ -340,7 +357,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
           .attr("fill",isSel?T.orange:isAct?T.orangeL:"rgba(200,120,60,0.2)")
           .attr("stroke",isSel?T.white:"#FFFFFF").attr("stroke-width",isSel?2:1).attr("opacity",isAct?0.9:0.25)
           .style("cursor","pointer")
-          .on("mouseover",function(ev){d3.select(this).attr("r",rr+3);setTooltip({x:ev.offsetX,y:ev.offsetY,a,dist:Math.round(haversine(a.hometownCoords,a.collegeCoords))});})
+          .on("mouseover",function(ev){d3.select(this).attr("r",rr+3);setTooltip({x:ev.offsetX,y:ev.offsetY,a,dist:a.hometownCoords?Math.round(haversine(a.hometownCoords,a.collegeCoords)):0});})
           .on("mouseout",function(){d3.select(this).attr("r",rr);setTooltip(null);})
           .on("click",()=>onAthleteClick(a));
       });
@@ -403,7 +420,7 @@ const SectionHead = ({children}) => (
 function DistBar({athletes}) {
   const total=athletes.length; if (!total) return null;
   const b={local:0,regional:0,far:0,extreme:0};
-  athletes.forEach(a=>{b[distBucket(haversine(a.hometownCoords,a.collegeCoords))]++;});
+  athletes.forEach(a=>{ if(!a.hometownCoords) return; b[distBucket(haversine(a.hometownCoords,a.collegeCoords))]++;});
   const cols={local:T.green,regional:T.yellow,far:T.orange,extreme:T.red};
   const lbl={local:"<100",regional:"100-400",far:"400-800",extreme:"800+"};
   return (
@@ -486,7 +503,7 @@ function StateFilterDropdown({selectedStates, onChange}) {
 }
 
 // ── FILTER CONTROLS ───────────────────────────────────────────────────────────
-function FilterControls({filters, setFilters, showSeason=false, selectedStates=[], onStatesChange=()=>{}, mapMode="flows", allConferences=[], getConfColleges=()=>[]}) {
+function FilterControls({filters, setFilters, showSeason=false, selectedStates=[], onStatesChange=()=>{}, mapMode="flows", allConferences=[], getConfColleges=()=>[], allAthletes=[], performanceRanges={}, onRangeChange=()=>{}}) {
   const confColleges = getConfColleges(filters.conference);
   const season = filters.season || "all";
   const visibleEvents = EVENTS_CFG.filter(e => season==="all" || e.season==="both" || e.season===season);
@@ -522,6 +539,21 @@ function FilterControls({filters, setFilters, showSeason=false, selectedStates=[
             </div>
           ))}
         </div>
+        {/* Performance range sliders — shown for each active event */}
+        {filters.events.length > 0 && (
+          <div style={{marginTop:8,padding:"8px 10px",background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:7}}>
+            <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Performance Range</div>
+            {filters.events.map(ev => (
+              <DualRangeSlider
+                key={ev}
+                event={ev}
+                allAthletes={allAthletes}
+                value={performanceRanges[ev] || null}
+                onChange={range => onRangeChange(ev, range)}
+              />
+            ))}
+          </div>
+        )}
       </div>
       <div style={{marginBottom:9}}>
         <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:5}}>Conference</div>
@@ -546,7 +578,7 @@ function FilterControls({filters, setFilters, showSeason=false, selectedStates=[
   );
 }
 
-function applyFilters(athletes, filters, search="") {
+function applyFilters(athletes, filters, search="", performanceRanges={}) {
   return athletes.filter(a => {
     if (filters.season && filters.season !== "all") {
       const eventsInSeason = EVENTS_CFG.filter(e=>e.season==="both"||e.season===filters.season).map(e=>e.id);
@@ -557,6 +589,18 @@ function applyFilters(athletes, filters, search="") {
     if (filters.college && a.college!==filters.college) return false;
     if (filters.hsYear && a.hsYear!==parseInt(filters.hsYear)) return false;
     if (filters.collegeYear && a.collegeYear!==parseInt(filters.collegeYear)) return false;
+    // Performance range filter: athlete must have a mark in range for EACH active event with a range set
+    for (const [ev, range] of Object.entries(performanceRanges)) {
+      if (!range) continue;
+      const [lo, hi] = range;
+      const mark = a.collegeTimes[ev];
+      if (mark === undefined) return false; // no mark for this event at all
+      if (isFieldEvent(ev)) {
+        if (mark < lo || mark > hi) return false;
+      } else {
+        if (mark < lo || mark > hi) return false;
+      }
+    }
     if (search) {
       const q=search.toLowerCase();
       if (!a.name.toLowerCase().includes(q) && !a.college.toLowerCase().includes(q) && !a.hometown.toLowerCase().includes(q)) return false;
@@ -669,7 +713,7 @@ function CollegePullPanel({athletes, focusedCollege, onFocusCollege}) {
     const map={};
     athletes.forEach(a=>{
       if(!map[a.college]) map[a.college]={college:a.college,conference:a.conference,list:[],hometowns:new Set()};
-      map[a.college].list.push({...a,dist:haversine(a.hometownCoords,a.collegeCoords)});
+      map[a.college].list.push({...a,dist:a.hometownCoords?haversine(a.hometownCoords,a.collegeCoords):0});
       map[a.college].hometowns.add(a.hometown);
     });
     return Object.values(map).map(c=>({...c,count:c.list.length,avgDist:c.list.reduce((s,a)=>s+a.dist,0)/c.list.length,maxDist:Math.max(...c.list.map(a=>a.dist)),hometownCount:c.hometowns.size})).sort((a,b)=>b.count-a.count);
@@ -725,7 +769,7 @@ function HometownPanel({athletes, focusedHometown, onFocusHometown}) {
     const map={};
     athletes.forEach(a=>{
       if(!map[a.hometown]) map[a.hometown]={hometown:a.hometown,list:[],colleges:new Set()};
-      map[a.hometown].list.push({...a,dist:haversine(a.hometownCoords,a.collegeCoords)});
+      map[a.hometown].list.push({...a,dist:a.hometownCoords?haversine(a.hometownCoords,a.collegeCoords):0});
       map[a.hometown].colleges.add(a.college);
     });
     return Object.values(map).map(h=>({...h,count:h.list.length,avgDist:h.list.reduce((s,a)=>s+a.dist,0)/h.list.length,maxDist:Math.max(...h.list.map(a=>a.dist)),collegeCount:h.colleges.size})).sort((a,b)=>b.count-a.count);
@@ -774,6 +818,139 @@ function HometownPanel({athletes, focusedHometown, onFocusHometown}) {
   );
 }
 
+
+// ── EVENT PROGRESS CHART ──────────────────────────────────────────────────────
+function EventProgressChart({event, performances}) {
+  const W = 280, H = 110, PAD = {top:12,right:12,bottom:24,left:38};
+  const field = isFieldEvent(event);
+
+  // Filter to this event, sort by year then mark
+  const perfs = performances
+    .filter(p => p.event === event && p.mark && p.year)
+    .sort((a,b) => a.year - b.year || (field ? b.mark - a.mark : a.mark - b.mark));
+
+  if (perfs.length < 2) return null;
+
+  const years = [...new Set(perfs.map(p=>p.year))].sort();
+  const marks = perfs.map(p=>p.mark);
+  const minMark = Math.min(...marks), maxMark = Math.max(...marks);
+  const markRange = maxMark - minMark || 1;
+
+  const xScale = yr => PAD.left + (years.indexOf(yr)/(Math.max(years.length-1,1))) * (W - PAD.left - PAD.right);
+  const yScale = m => {
+    const norm = field
+      ? (m - minMark) / markRange          // field: higher = higher on chart
+      : 1 - (m - minMark) / markRange;     // time: lower = higher on chart
+    return PAD.top + norm * (H - PAD.top - PAD.bottom);
+  };
+
+  // Year bests (the line)
+  const yearBests = years.map(yr => {
+    const yPerfs = perfs.filter(p=>p.year===yr);
+    const best = field
+      ? yPerfs.reduce((b,p)=>p.mark>b.mark?p:b)
+      : yPerfs.reduce((b,p)=>p.mark<b.mark?p:b);
+    return {yr, mark: best.mark, display: best.mark_display || fmtTime(best.mark)};
+  });
+
+  const prMark = field ? Math.max(...marks) : Math.min(...marks);
+  const linePoints = yearBests.map(b=>`${xScale(b.yr)},${yScale(b.mark)}`).join(" ");
+
+  return (
+    <div style={{marginBottom:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <span style={{color:T.orange,fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:700}}>{event}</span>
+        <span style={{color:T.dim,fontSize:9,fontFamily:"monospace"}}>{perfs.length} marks · PR: <span style={{color:T.orange,fontWeight:700}}>{fmtTime(prMark)}</span></span>
+      </div>
+      <svg width={W} height={H} style={{overflow:"visible",display:"block"}}>
+        {/* Y-axis gridlines */}
+        {[0,0.5,1].map(t => {
+          const y = PAD.top + t*(H-PAD.top-PAD.bottom);
+          const val = field ? minMark + (1-t)*markRange : minMark + t*markRange;
+          return (
+            <g key={t}>
+              <line x1={PAD.left} x2={W-PAD.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
+              <text x={PAD.left-4} y={y+3} textAnchor="end" fontSize={7} fill={T.dim} fontFamily="monospace">{fmtTime(val)}</text>
+            </g>
+          );
+        })}
+        {/* Year labels on X axis */}
+        {years.map(yr => (
+          <text key={yr} x={xScale(yr)} y={H-4} textAnchor="middle" fontSize={8} fill={T.dim} fontFamily="'Barlow Condensed',sans-serif">{yr}</text>
+        ))}
+        {/* Line connecting year bests */}
+        {yearBests.length > 1 && (
+          <polyline points={linePoints} fill="none" stroke={T.orange} strokeWidth={1.5} strokeOpacity={0.6}/>
+        )}
+        {/* All performance dots */}
+        {perfs.map((p,i) => {
+          const isPR = p.mark === prMark;
+          return (
+            <circle key={i} cx={xScale(p.year)} cy={yScale(p.mark)} r={isPR?4:2.5}
+              fill={isPR?T.orange:T.bgCard} stroke={isPR?T.orangeD:T.borderH}
+              strokeWidth={isPR?1.5:1}>
+              <title>{p.mark_display || fmtTime(p.mark)} — {p.meet_name||p.year}</title>
+            </circle>
+          );
+        })}
+        {/* Year best labels */}
+        {yearBests.map(b => (
+          <text key={b.yr} x={xScale(b.yr)} y={yScale(b.mark)-7} textAnchor="middle"
+            fontSize={7} fill={T.orange} fontFamily="monospace" fontWeight="700">{b.display}</text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// ── DUAL RANGE SLIDER ─────────────────────────────────────────────────────────
+function DualRangeSlider({event, allAthletes, value, onChange}) {
+  const marks = allAthletes.map(a => a.collegeTimes[event]).filter(Boolean);
+  if (marks.length < 2) return null;
+
+  // Use reduce instead of Math.min/max(...marks) — spread crashes on large arrays
+  const globalMin = marks.reduce((a,b) => Math.min(a,b), marks[0]);
+  const globalMax = marks.reduce((a,b) => Math.max(a,b), marks[0]);
+  if (globalMin === globalMax) return null;
+
+  const [lo, hi] = value || [globalMin, globalMax];
+  const pct = v => ((v - globalMin) / (globalMax - globalMin) * 100).toFixed(1) + "%";
+
+  return (
+    <div style={{padding:"6px 0 10px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+        <span style={{color:T.orange,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:700}}>{event} range</span>
+        <span style={{color:T.muted,fontSize:9,fontFamily:"monospace"}}>
+          {fmtTime(lo)} – {fmtTime(hi)}
+        </span>
+      </div>
+      <div style={{position:"relative",height:20,marginTop:4}}>
+        {/* Track */}
+        <div style={{position:"absolute",top:"50%",left:0,right:0,height:3,background:T.border,borderRadius:2,transform:"translateY(-50%)"}}/>
+        {/* Active range fill */}
+        <div style={{position:"absolute",top:"50%",left:pct(lo),width:`calc(${pct(hi)} - ${pct(lo)})`,height:3,background:T.orange,borderRadius:2,transform:"translateY(-50%)"}}/>
+        {/* Low handle */}
+        <input type="range" min={globalMin} max={globalMax} step={(globalMax-globalMin)/200}
+          value={lo}
+          onChange={e => { const v=+e.target.value; if(v<=hi) onChange([v,hi]); }}
+          style={{position:"absolute",width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:lo>globalMin+0.8*(globalMax-globalMin)?2:1}}/>
+        {/* High handle */}
+        <input type="range" min={globalMin} max={globalMax} step={(globalMax-globalMin)/200}
+          value={hi}
+          onChange={e => { const v=+e.target.value; if(v>=lo) onChange([lo,v]); }}
+          style={{position:"absolute",width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:2}}/>
+        {/* Visual handles */}
+        <div style={{position:"absolute",top:"50%",left:pct(lo),width:12,height:12,background:T.orange,borderRadius:"50%",transform:"translate(-50%,-50%)",border:`2px solid ${T.orangeD}`,pointerEvents:"none"}}/>
+        <div style={{position:"absolute",top:"50%",left:pct(hi),width:12,height:12,background:T.orange,borderRadius:"50%",transform:"translate(-50%,-50%)",border:`2px solid ${T.orangeD}`,pointerEvents:"none"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}>
+        <span style={{color:T.dim,fontSize:8,fontFamily:"monospace"}}>{fmtTime(globalMin)}</span>
+        <span style={{color:T.dim,fontSize:8,fontFamily:"monospace"}}>{fmtTime(globalMax)}</span>
+      </div>
+    </div>
+  );
+}
+
 // ── ATHLETE DETAIL ────────────────────────────────────────────────────────────
 function AthleteDetail({athlete, onClose}) {
   if (!athlete) return (
@@ -783,7 +960,7 @@ function AthleteDetail({athlete, onClose}) {
     </div>
   );
 
-  const dist=haversine(athlete.hometownCoords,athlete.collegeCoords), dc=distColor(dist);
+  const dist=athlete.hometownCoords?haversine(athlete.hometownCoords,athlete.collegeCoords):0, dc=distColor(dist);
   const colEvents = Object.keys(athlete.collegeTimes);
   const hsEvents = Object.keys(athlete.hsTimes);
 
@@ -888,6 +1065,26 @@ function AthleteDetail({athlete, onClose}) {
           )}
         </>
       )}
+
+      {/* Year-over-year progress charts */}
+      {athlete.rawPerformances?.length > 0 && (() => {
+        const eventsWithData = [...new Set(athlete.rawPerformances.filter(p=>p.year).map(p=>p.event))];
+        const chartableEvents = eventsWithData.filter(ev => {
+          const years = new Set(athlete.rawPerformances.filter(p=>p.event===ev && p.year).map(p=>p.year));
+          return years.size >= 2;
+        });
+        if (!chartableEvents.length) return null;
+        return (
+          <>
+            <SectionHead>Year-over-Year Progress</SectionHead>
+            <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:4}}>
+              {chartableEvents.map(ev => (
+                <EventProgressChart key={ev} event={ev} performances={athlete.rawPerformances}/>
+              ))}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -902,13 +1099,28 @@ export default function App() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch("/api/athletes?limit=2000")
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(data => {
-        setAthletes(Array.isArray(data) ? data.map(transformAthlete) : []);
+    // Paginate to handle large datasets — fetch all pages
+    const fetchAll = async () => {
+      const PAGE = 1000;
+      let all = [], page = 0, done = false;
+      try {
+        while (!done) {
+          const r = await fetch(`/api/athletes?limit=${PAGE}&offset=${page * PAGE}`);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = await r.json();
+          const batch = Array.isArray(data) ? data : [];
+          all = all.concat(batch);
+          if (batch.length < PAGE) done = true;
+          else page++;
+        }
+        setAthletes(all.map(transformAthlete));
         setLoading(false);
-      })
-      .catch(err => { setError(err.message); setLoading(false); });
+      } catch(err) {
+        setError(err.message);
+        setLoading(false);
+      }
+    };
+    fetchAll();
   }, []);
 
   // ── Derived conference/college lists from real data ────────────────────────
@@ -932,10 +1144,12 @@ export default function App() {
   const [selectedStates, setSelectedStates] = useState([]);
   const [filters, setFilters] = useState({...BLANK_FILTERS});
   const [search, setSearch] = useState("");
+  const [performanceRanges, setPerformanceRanges] = useState({});
+  const handleRangeChange = (ev, range) => setPerformanceRanges(prev => ({...prev, [ev]: range}));
 
   // ── Filtered list — depends on athletes state ──────────────────────────────
-  const filtered = useMemo(() => applyFilters(athletes, filters, search), [athletes, filters, search]);
-  const overallAvg = useMemo(() => filtered.length ? Math.round(filtered.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/filtered.length) : 0, [filtered]);
+  const filtered = useMemo(() => applyFilters(athletes, filters, search, performanceRanges), [athletes, filters, search, performanceRanges]);
+  const overallAvg = useMemo(() => { const withCoords=filtered.filter(a=>a.hometownCoords); return withCoords.length ? Math.round(withCoords.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/withCoords.length) : 0; }, [filtered]);
   const hasFilters = filters.events.length>0||filters.conference||filters.college||filters.hsYear||filters.collegeYear||search||filters.season!=="all"||selectedStates.length>0;
 
   const handleAthleteClick = a => { setSelectedAthlete(s=>s?.id===a.id?null:a); setRightTab("athlete"); };
@@ -996,13 +1210,16 @@ export default function App() {
 
             <FilterControls
               filters={filters}
-              setFilters={setFilters}
+              setFilters={setFiltersWithCleanup}
               showSeason={true}
               selectedStates={selectedStates}
               onStatesChange={setSelectedStates}
               mapMode={mapMode}
               allConferences={allConferences}
               getConfColleges={getConfColleges}
+              allAthletes={athletes}
+              performanceRanges={performanceRanges}
+              onRangeChange={handleRangeChange}
             />
 
             <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:4}}>
@@ -1015,7 +1232,7 @@ export default function App() {
                 <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>No athletes match filters</div>
               )}
               {filtered.slice(0,80).map(a=>{
-                const d=Math.round(haversine(a.hometownCoords,a.collegeCoords));
+                const d=a.hometownCoords?Math.round(haversine(a.hometownCoords,a.collegeCoords)):null;
                 const isSel=selectedAthlete?.id===a.id;
                 return (
                   <button key={a.id} onClick={()=>handleAthleteClick(a)} style={{display:"block",width:"100%",textAlign:"left",background:isSel?T.orangeGlow:"rgba(255,255,255,0.02)",border:`1px solid ${isSel?T.orange:T.border}`,borderRadius:5,padding:"5px 7px",marginBottom:2,cursor:"pointer",transition:"all 0.12s"}}>
@@ -1098,4 +1315,3 @@ export default function App() {
     </>
   );
 }
-
