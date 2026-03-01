@@ -191,8 +191,16 @@ function transformAthlete(raw, index) {
   const collegeTimes = {};
   const hsTimes = {};
   const rawPerformances = [];
+  const PERF_ALIASES = {
+    "60H":"60mH","110H":"110mH","400H":"400mH","100H":"100mH",
+    "Steeple":"3000SC","3000S":"3000SC","Steeplechase":"3000SC",
+    "High Jump":"HJ","Long Jump":"LJ","Triple Jump":"TJ",
+    "Pole Vault":"PV","Shot Put":"SP","Discus":"DT",
+    "Javelin":"JT","Weight Throw":"WT","Hammer":"HT",
+  };
   perfs.forEach(p => {
     if (!p.mark || !p.event) return;
+    p = {...p, event: PERF_ALIASES[p.event] || p.event};
     if (RELAY_EVENTS.has(p.event)) return;
     rawPerformances.push(p);
     const bucket = p.level === "hs" ? hsTimes : collegeTimes;
@@ -202,12 +210,36 @@ function transformAthlete(raw, index) {
     if (isBetter) bucket[p.event] = p.mark;
   });
   const college = raw.college || "Unknown";
-  // Supabase may return events as a PG array string "{60m,Mile}" or already as JS array
+  // Supabase may return events as:
+  // - JS array already: ["Mile","800m"]
+  // - JSON string: '["Mile","800m"]'
+  // - PG array string: '{Mile,800m}'
+  // - null/undefined
   let eventsRaw = raw.events || [];
   if (typeof eventsRaw === "string") {
-    eventsRaw = eventsRaw.replace(/^\{|\}$/g, "").split(",").map(s => s.trim()).filter(Boolean);
+    const s = eventsRaw.trim();
+    if (s.startsWith("[")) {
+      try { eventsRaw = JSON.parse(s); } catch(e) { eventsRaw = []; }
+    } else {
+      eventsRaw = s.replace(/^\{|\}$/g, "").split(",").map(s => s.trim()).filter(Boolean);
+    }
   }
   if (!Array.isArray(eventsRaw)) eventsRaw = [];
+
+  // Normalize hurdle event names to match EVENTS_CFG
+  const EVENT_ALIASES = {
+    "60H":"60mH","60mh":"60mH","60MH":"60mH",
+    "100H":"100mH","100mh":"100mH",
+    "110H":"110mH","110mh":"110mH","110MH":"110mH",
+    "400H":"400mH","400mh":"400mH","400MH":"400mH",
+    "Steeple":"3000SC","3000S":"3000SC","3kS":"3000SC",
+    "Steeplechase":"3000SC","3000 Steeplechase":"3000SC",
+    "High Jump":"HJ","Long Jump":"LJ","Triple Jump":"TJ",
+    "Pole Vault":"PV","Shot Put":"SP","Discus":"DT",
+    "Javelin":"JT","Weight Throw":"WT","Hammer":"HT",
+    "Pentathlon":"Pent","Heptathlon":"Hept","Decathlon":"Dec",
+  };
+  eventsRaw = eventsRaw.map(e => EVENT_ALIASES[e] || e);
   const events = eventsRaw.filter(e => !RELAY_EVENTS.has(e));
 
   // Only use hometown if it's a real "City, ST" value
