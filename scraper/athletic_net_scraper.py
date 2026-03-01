@@ -26,7 +26,7 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-RATE_LIMIT = 2.5   # seconds between requests
+RATE_LIMIT = 4.0   # seconds between requests (DDG needs more breathing room)
 
 GOOGLE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -112,11 +112,13 @@ def parse_mark(s: str) -> float | None:
 def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
     """
     Search DuckDuckGo Lite for site:athletic.net/athlete "Name".
-    DDG Lite serves real HTML without JavaScript rendering.
+    DDG Lite serves real HTML. Result links are DDG redirects with encoded URLs.
     """
     global _google_blocked
     if _google_blocked:
         return []
+
+    from urllib.parse import urlparse, parse_qs, unquote
 
     query = f'site:athletic.net/athlete "{name}"'
     if hs_grad_year:
@@ -131,38 +133,57 @@ def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
         log.info(f"  [DDG] Status: {r.status_code}, query: {query}")
 
         if r.status_code == 429:
-            log.warning("  [DDG] Rate limited — backing off 60s")
-            _google_blocked = True
+            log.warning("  [DDG] Rate limited (429) — sleeping 60s")
             time.sleep(60)
+            _google_blocked = True
             return []
 
-        if r.status_code != 200:
+        # 202 = DDG asking us to slow down, retry once after delay
+        if r.status_code == 202:
+            log.warning("  [DDG] Got 202 — slowing down, retrying after 10s")
+            time.sleep(10)
+            r = requests.get(url, headers=GOOGLE_HEADERS, params=params, timeout=20)
+            log.info(f"  [DDG] Retry status: {r.status_code}")
+            if r.status_code not in (200, 202):
+                return []
+
+        if r.status_code not in (200, 202):
             log.warning(f"  [DDG] HTTP {r.status_code}")
             return []
 
         soup = BeautifulSoup(r.text, "lxml")
-
-        # DDG Lite puts result URLs in <a class="result-link"> tags
         all_hrefs = [a.get("href", "") for a in soup.find_all("a", href=True)]
-        anet_hrefs = [h for h in all_hrefs if "athletic.net" in h]
-        log.info(f"  [DDG] Total hrefs: {len(all_hrefs)}, anet hrefs: {anet_hrefs[:5]}")
-
-        # Also log a snippet if no results
-        if not anet_hrefs:
-            log.info(f"  [DDG] Body snippet: {r.text[200:600]}")
+        anet_hrefs = [h for h in all_hrefs if "athletic.net" in h or "uddg=" in h]
+        log.info(f"  [DDG] Total hrefs: {len(all_hrefs)}, candidate hrefs: {len(anet_hrefs)}")
 
         urls = []
         for href in all_hrefs:
-            # DDG Lite links directly, no redirect wrapping
-            if re.search(r'athletic\.net/athlete/\d+', href):
-                urls.append(re.sub(r'\?.*$', '', href))  # strip query params
-            elif re.search(r'athletic\.net/TrackAndField/Athlete\.aspx\?AID=\d+', href):
-                aid = re.search(r'AID=(\d+)', href).group(1)
+            # DDG wraps URLs: //duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.athletic.net%2F...
+            decoded = href
+            if "uddg=" in href:
+                try:
+                    qs = parse_qs(urlparse("https:" + href).query) if href.startswith("//") else parse_qs(urlparse(href).query)
+                    decoded = unquote(qs.get("uddg", [href])[0])
+                except Exception:
+                    decoded = unquote(href.split("uddg=")[-1].split("&")[0])
+
+            if re.search(r'athletic\.net/athlete/\d+', decoded):
+                clean = re.search(r'(https?://www\.athletic\.net/athlete/\d+[^&\s]*)', decoded)
+                if clean:
+                    urls.append(clean.group(1).rstrip("/") + "/")
+            elif re.search(r'athletic\.net/TrackAndField/Athlete\.aspx\?AID=\d+', decoded):
+                aid = re.search(r'AID=(\d+)', decoded).group(1)
                 urls.append(f"https://www.athletic.net/athlete/{aid}/track-and-field/")
 
-        # Deduplicate
+        # Deduplicate, prefer track-and-field URLs
         seen = set()
-        unique = [u for u in urls if not (u in seen or seen.add(u))]
+        unique = []
+        for u in sorted(urls, key=lambda x: "track-and-field" not in x):
+            athlete_id = re.search(r'/athlete/(\d+)/', u)
+            key = athlete_id.group(1) if athlete_id else u
+            if key not in seen:
+                seen.add(key)
+                unique.append(u)
 
         log.info(f"  [DDG] Found {len(unique)} profile URLs: {unique[:3]}")
         return unique
