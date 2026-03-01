@@ -521,6 +521,24 @@ def run(group: str = "all", limit: int = 99999, process_all: bool = False):
     log.info(f"Athletic.net Backfill v2 — Group: {group}, Limit: {limit}, All: {process_all}")
     log.info("=" * 60)
 
+    # Probe Angular main JS to find real API endpoints
+    log.info("Probing angular.athletic.net JS for API endpoints...")
+    try:
+        time.sleep(2)
+        r = requests.get("https://angular.athletic.net/app/site-app/main-FOFKCLVL.js", headers=HEADERS, timeout=30)
+        if r.status_code == 200:
+            js = r.text
+            api_patterns = re.findall(r'["\`]((?:/api/|https://[^"\'`\s]{5,80})[^"\'`\s]{0,100})["\`]', js)
+            unique = sorted(set(p for p in api_patterns if any(x in p.lower() for x in ['search', 'athlete', 'result'])))
+            log.info(f"  [Probe] JS size: {len(js)} chars")
+            log.info(f"  [Probe] Relevant API patterns: {unique[:30]}")
+            domains = re.findall(r'https://[\w\.\-]+athletic\.net[^\s"\'`]{0,80}', js)
+            log.info(f"  [Probe] athletic.net URLs: {sorted(set(domains))[:20]}")
+        else:
+            log.info(f"  [Probe] JS fetch failed: {r.status_code}")
+    except Exception as e:
+        log.error(f"  [Probe] Error: {e}")
+
     # Discover Algolia credentials
     log.info("Discovering Algolia search keys...")
     discover_algolia_keys()
