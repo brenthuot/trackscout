@@ -26,7 +26,7 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-RATE_LIMIT = 4.0   # seconds between requests (DDG needs more breathing room)
+RATE_LIMIT = 6.0   # seconds between requests (DDG needs breathing room)
 
 GOOGLE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -138,10 +138,10 @@ def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
             _google_blocked = True
             return []
 
-        # 202 = DDG asking us to slow down, retry once after delay
+        # 202 = DDG asking us to slow down, retry once after longer delay
         if r.status_code == 202:
-            log.warning("  [DDG] Got 202 — slowing down, retrying after 10s")
-            time.sleep(10)
+            log.warning("  [DDG] Got 202 — slowing down, retrying after 30s")
+            time.sleep(30)
             r = requests.get(url, headers=GOOGLE_HEADERS, params=params, timeout=20)
             log.info(f"  [DDG] Retry status: {r.status_code}")
             if r.status_code not in (200, 202):
@@ -223,7 +223,7 @@ def scrape_profile(url: str, expected_name: str, hs_grad_year: int | None) -> di
     expected_parts = expected_name.lower().split()
     if len(expected_parts) >= 2:
         if not all(p in page_name.lower() for p in expected_parts[:2]):
-            log.debug(f"    Name mismatch: expected '{expected_name}', got '{page_name}'")
+            log.info(f"    Name mismatch: expected '{expected_name}', page h1/h2='{page_name}'")
             return None
 
     # ── Extract hometown ─────────────────────────────────────────────────────
