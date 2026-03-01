@@ -30,29 +30,20 @@ const T = {
 
 // ── EVENT CONFIG ──────────────────────────────────────────────────────────────
 const EVENTS_CFG = [
-  {id:"60m",    label:"60m",           season:"indoor" },
-  {id:"60mH",   label:"60mH",          season:"indoor" },
-  {id:"100m",   label:"100m",          season:"outdoor"},
-  {id:"200m",   label:"200m",          season:"both"   },
-  {id:"400m",   label:"400m",          season:"both"   },
-  {id:"800m",   label:"800m",          season:"both"   },
-  {id:"1500m",  label:"1500m",         season:"both"   },
-  {id:"Mile",   label:"Mile",          season:"both"   },
-  {id:"3000m",  label:"3000m",         season:"indoor" },
-  {id:"5000m",  label:"5000m",         season:"both"   },
-  {id:"10000m", label:"10000m",        season:"outdoor"},
-  {id:"110mH",  label:"110mH",         season:"outdoor"},
-  {id:"400mH",  label:"400mH",         season:"outdoor"},
-  {id:"LJ",     label:"Long Jump",     season:"both"   },
-  {id:"TJ",     label:"Triple Jump",   season:"both"   },
-  {id:"HJ",     label:"High Jump",     season:"both"   },
-  {id:"PV",     label:"Pole Vault",    season:"both"   },
-  {id:"SP",     label:"Shot Put",      season:"both"   },
-  {id:"WT",     label:"Weight Throw",  season:"indoor" },
-  {id:"DT",     label:"Discus",        season:"outdoor"},
-  {id:"JT",     label:"Javelin",       season:"outdoor"},
-  {id:"Pent",   label:"Pentathlon",    season:"indoor" },
-  {id:"Hept",   label:"Heptathlon",    season:"outdoor"},
+  {id:"60m",    label:"60m",    season:"indoor" },
+  {id:"60mH",   label:"60mH",   season:"indoor" },
+  {id:"100m",   label:"100m",   season:"outdoor"},
+  {id:"200m",   label:"200m",   season:"both"   },
+  {id:"400m",   label:"400m",   season:"both"   },
+  {id:"800m",   label:"800m",   season:"both"   },
+  {id:"1500m",  label:"1500m",  season:"both"   },
+  {id:"Mile",   label:"Mile",   season:"both"   },
+  {id:"3000m",  label:"3000m",  season:"indoor" },
+  {id:"5000m",  label:"5000m",  season:"both"   },
+  {id:"10000m", label:"10000m", season:"outdoor"},
+  {id:"110mH",  label:"110mH",  season:"outdoor"},
+  {id:"400mH",  label:"400mH",  season:"outdoor"},
+  {id:"3000SC", label:"3000SC", season:"outdoor"},
 ];
 
 // Field events: higher mark = better
@@ -565,6 +556,14 @@ function FilterControls({filters, setFilters, showSeason=false, selectedStates=[
 
   return (
     <div>
+      <div style={{marginBottom:11}}>
+        <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Gender</div>
+        <div style={{display:"flex",gap:3}}>
+          {[["","All"],["M","Men"],["F","Women"]].map(([v,l])=>(
+            <Chip key={v} label={l} active={(filters.gender||"")===v} onClick={()=>setFilters(f=>({...f,gender:v}))} color="247,105,0"/>
+          ))}
+        </div>
+      </div>
       {showSeason && (
         <div style={{marginBottom:11}}>
           <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Season</div>
@@ -639,7 +638,7 @@ function applyFilters(athletes, filters, search="", performanceRanges={}) {
     }
     if (filters.events?.length>0 && !Array.isArray(a.events)) return false;
     if (filters.events?.length>0 && !filters.events.some(e=>a.events.includes(e))) return false;
-    if (filters.conference && a.conference!==filters.conference) return false;
+    if (filters.gender && a.gender !== filters.gender) return false;
     if (filters.college && a.college!==filters.college) return false;
     if (filters.hsYear && a.hsYear!==parseInt(filters.hsYear)) return false;
     if (filters.collegeYear && a.collegeYear!==parseInt(filters.collegeYear)) return false;
@@ -1013,7 +1012,7 @@ function EventProgressChart({event, performances}) {
                 const isPR = p.mark === prMark;
                 const isSB = !isPR && seasonBestSet.has(p);
                 const prevP = sorted[i - 1];
-                const seasonChanged = prevP && (prevP.season !== p.season || prevP.year !== p.year);
+                const seasonChanged = i > 0 && prevP && `${prevP.year}-${prevP.season}` !== `${p.year}-${p.season}`;
                 const markColor = isPR ? T.orange : isSB ? T.blueL : T.offWhite;
                 const markWeight = (isPR || isSB) ? 700 : 400;
                 return (
@@ -1278,7 +1277,7 @@ function AthleteDetail({athlete, onClose}) {
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────────
-const BLANK_FILTERS = {events:[],conference:"",college:"",hsYear:"",collegeYear:"",season:"all"};
+const BLANK_FILTERS = {events:[],conference:"",college:"",hsYear:"",collegeYear:"",season:"all",gender:""};
 
 export default function App() {
   // ── Data fetching ──────────────────────────────────────────────────────────
