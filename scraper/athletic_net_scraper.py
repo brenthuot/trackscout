@@ -111,7 +111,8 @@ def parse_mark(s: str) -> float | None:
 # ── GOOGLE SEARCH ─────────────────────────────────────────────────────────────
 def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
     """
-    Search Bing for site:athletic.net/athlete "Name" and return matching profile URLs.
+    Search DuckDuckGo Lite for site:athletic.net/athlete "Name".
+    DDG Lite serves real HTML without JavaScript rendering.
     """
     global _google_blocked
     if _google_blocked:
@@ -121,60 +122,53 @@ def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
     if hs_grad_year:
         query += f' {hs_grad_year}'
 
-    url = "https://www.bing.com/search"
-    params = {"q": query, "count": 5}
+    url = "https://lite.duckduckgo.com/lite/"
+    params = {"q": query}
 
     try:
         time.sleep(RATE_LIMIT)
         r = requests.get(url, headers=GOOGLE_HEADERS, params=params, timeout=20)
-        log.info(f"  [Bing] Status: {r.status_code}, query: {query}")
+        log.info(f"  [DDG] Status: {r.status_code}, query: {query}")
 
         if r.status_code == 429:
-            log.warning("  [Bing] Rate limited — backing off")
+            log.warning("  [DDG] Rate limited — backing off 60s")
             _google_blocked = True
             time.sleep(60)
             return []
 
         if r.status_code != 200:
-            log.warning(f"  [Bing] HTTP {r.status_code}")
+            log.warning(f"  [DDG] HTTP {r.status_code}")
             return []
 
         soup = BeautifulSoup(r.text, "lxml")
+
+        # DDG Lite puts result URLs in <a class="result-link"> tags
         all_hrefs = [a.get("href", "") for a in soup.find_all("a", href=True)]
         anet_hrefs = [h for h in all_hrefs if "athletic.net" in h]
+        log.info(f"  [DDG] Total hrefs: {len(all_hrefs)}, anet hrefs: {anet_hrefs[:5]}")
 
-        # Also check cite tags (Bing puts result URLs there)
-        cite_urls = [c.get_text(strip=True) for c in soup.find_all("cite")]
-        anet_cites = [c for c in cite_urls if "athletic.net" in c]
-
-        log.info(f"  [Bing] Total hrefs: {len(all_hrefs)}, anet hrefs: {anet_hrefs[:5]}")
-        log.info(f"  [Bing] Cite URLs: {cite_urls[:10]}")
-        log.info(f"  [Bing] Body snippet: {r.text[500:1000]}")
+        # Also log a snippet if no results
+        if not anet_hrefs:
+            log.info(f"  [DDG] Body snippet: {r.text[200:600]}")
 
         urls = []
-        # Check hrefs
         for href in all_hrefs:
+            # DDG Lite links directly, no redirect wrapping
             if re.search(r'athletic\.net/athlete/\d+', href):
-                urls.append(href.split("&")[0])
+                urls.append(re.sub(r'\?.*$', '', href))  # strip query params
             elif re.search(r'athletic\.net/TrackAndField/Athlete\.aspx\?AID=\d+', href):
                 aid = re.search(r'AID=(\d+)', href).group(1)
                 urls.append(f"https://www.athletic.net/athlete/{aid}/track-and-field/")
-        # Check cite tags
-        for cite in anet_cites:
-            if re.search(r'athletic\.net/athlete/\d+', cite):
-                m = re.search(r'athletic\.net/athlete/(\d+)', cite)
-                if m:
-                    urls.append(f"https://www.athletic.net/athlete/{m.group(1)}/track-and-field/")
 
         # Deduplicate
         seen = set()
         unique = [u for u in urls if not (u in seen or seen.add(u))]
 
-        log.info(f"  [Bing] Found {len(unique)} profile URLs: {unique[:3]}")
+        log.info(f"  [DDG] Found {len(unique)} profile URLs: {unique[:3]}")
         return unique
 
     except Exception as e:
-        log.error(f"  [Bing] Error: {e}")
+        log.error(f"  [DDG] Error: {e}")
         return []
 
 
