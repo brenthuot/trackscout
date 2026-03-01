@@ -29,6 +29,7 @@ export default async function handler(req, res) {
         )
       `)
       .eq("source", "tfrrs")
+      .neq("field_only", true)
       .range(offset, offset + limit - 1)
       .order("id");
 
