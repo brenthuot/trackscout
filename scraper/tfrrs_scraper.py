@@ -38,7 +38,17 @@ HEADERS = {
     "Referer": "https://www.tfrrs.org/",
 }
 RATE_LIMIT_SECONDS = 2.5
-MAX_ATHLETES_PER_RUN = 300
+
+# ── CONFERENCE GROUPS for parallel matrix runs ────────────────────────────────
+# Each group runs on its own GitHub Actions runner (own IP) — safe to parallelize.
+CONFERENCE_GROUPS = {
+    "1": ["SEC", "Big Ten"],
+    "2": ["ACC", "Big 12"],
+    "3": ["Pac-12", "Ivy League", "Big East"],
+    "4": ["Mountain West", "Big Sky"],
+    "5": ["American", "Atlantic 10"],
+    "6": ["West Coast"],
+}
 
 # ── TEAM DEFINITIONS ──────────────────────────────────────────────────────────
 # Format: "Display Name": (state_code, slug, conference)
@@ -469,21 +479,31 @@ def get_scraped_ids() -> set:
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def run_scraper():
+def run_scraper(group: str = "all"):
     log.info("=" * 60)
-    log.info("Run Stats TFRRS Scraper v3")
+    log.info(f"Run Stats TFRRS Scraper v3 — Group: {group}")
     log.info("URL pattern: /teams/tf/{STATE}_college_{m/f}_{Slug}.html")
     log.info("=" * 60)
+
+    # Filter teams by conference group if specified
+    if group != "all" and group in CONFERENCE_GROUPS:
+        target_confs = set(CONFERENCE_GROUPS[group])
+        teams_to_scrape = {
+            school: info for school, info in TEAMS.items()
+            if info[2] in target_confs
+        }
+        log.info(f"Group {group} conferences: {target_confs}")
+        log.info(f"Schools to scrape: {len(teams_to_scrape)}")
+    else:
+        teams_to_scrape = TEAMS
+        log.info(f"Scraping ALL {len(teams_to_scrape)} schools")
 
     already_done = get_scraped_ids()
     log.info(f"Already in DB: {len(already_done)} athletes — skipping these")
 
     saved = skipped = errors = found_teams = missing_teams = 0
 
-    for school, (state, slug, conference) in TEAMS.items():
-        if saved >= MAX_ATHLETES_PER_RUN:
-            log.info(f"Reached MAX_ATHLETES_PER_RUN ({MAX_ATHLETES_PER_RUN}) — stopping")
-            break
+    for school, (state, slug, conference) in teams_to_scrape.items():
 
         for gender_code, gender_label in GENDERS:
             url = f"{BASE_URL}/teams/tf/{state}_college_{gender_code}_{slug}.html"
@@ -570,9 +590,6 @@ def run_scraper():
             log.info(f"  Found {len(athlete_links)} {gender_label} athletes at {school}")
 
             for info in athlete_links:
-                if saved >= MAX_ATHLETES_PER_RUN:
-                    break
-
                 id_match = re.search(r"/athletes/(\d+)", info["url"])
                 if id_match and id_match.group(1) in already_done:
                     skipped += 1
@@ -595,4 +612,13 @@ def run_scraper():
 
 
 if __name__ == "__main__":
-    run_scraper()
+    import argparse
+    parser = argparse.ArgumentParser(description="TFRRS Scraper")
+    parser.add_argument(
+        "--group", default="all",
+        help="Conference group to scrape: 1-6 or 'all'. "
+             "Groups: 1=SEC+Big10, 2=ACC+Big12, 3=Pac12+Ivy+BigEast, "
+             "4=MWC+BigSky, 5=American+A10, 6=WCC"
+    )
+    args = parser.parse_args()
+    run_scraper(group=args.group)
