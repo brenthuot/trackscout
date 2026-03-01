@@ -904,6 +904,7 @@ function EventProgressChart({event, performances, allEventMarks=[]}) {
   if (perfs.length < 2) return null;
 
   // Filter out outdoor 2026 — outdoor season hasn't started yet (indoor only as of Mar 2026)
+  // Only filter if season is genuinely labeled outdoor (scraper now infers this from meet date)
   const CURRENT_YEAR = 2026;
   const filteredPerfs = perfs.filter(p => !(p.year === CURRENT_YEAR && p.season === "outdoor"));
 
