@@ -43,7 +43,7 @@ const EVENTS_CFG = [
   {id:"10000m", label:"10000m", season:"outdoor"},
   {id:"110mH",  label:"110mH",  season:"outdoor"},
   {id:"400mH",  label:"400mH",  season:"outdoor"},
-  {id:"3000SC", label:"3000SC", season:"outdoor"},
+  {id:"3000SC", label:"Steeple", season:"outdoor"},
 ];
 
 // Field events: higher mark = better
@@ -580,7 +580,7 @@ function FilterControls({filters, setFilters, showSeason=false, selectedStates=[
           {visibleEvents.map(e=>{
             const isIndoor=e.season==="indoor", isOutdoor=e.season==="outdoor";
             const col=isIndoor?"43,114,215":isOutdoor?"32,50,153":"247,105,0";
-            return <Chip key={e.id} label={e.id} active={filters.events.includes(e.id)} onClick={()=>toggleEvent(e.id)} color={col}/>;
+            return <Chip key={e.id} label={e.label} active={filters.events.includes(e.id)} onClick={()=>toggleEvent(e.id)} color={col}/>;
           })}
         </div>
         <div style={{display:"flex",gap:10,marginTop:5}}>
