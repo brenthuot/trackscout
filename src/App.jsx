@@ -875,8 +875,26 @@ function HometownPanel({athletes, focusedHometown, onFocusHometown}) {
 
 
 // ── EVENT PROGRESS CHART ──────────────────────────────────────────────────────
-function EventProgressChart({event, performances}) {
-  const [expanded, setExpanded] = useState(false);
+// Season colors
+const SEASON_COLOR = {indoor:"#3B82F6", outdoor:"#F76900", xc:"#22C55E"};
+const seasonColor = s => SEASON_COLOR[s] || T.grayM;
+
+// Parse place finish out of meet_name e.g. "1st(F)" → {place:1, round:"F"}
+function parsePlace(meetName) {
+  if (!meetName) return null;
+  const m = meetName.match(/^(\d+)(?:st|nd|rd|th)\(([^)]+)\)/i);
+  if (!m) return null;
+  return {place: parseInt(m[1]), round: m[2]};
+}
+function placeColor(place) {
+  if (place === 1) return "#F59E0B";
+  if (place === 2) return "#94A3B8";
+  if (place === 3) return "#CD7F32";
+  if (place <= 8)  return T.blueL;
+  return null;
+}
+
+function EventProgressChart({event, performances, allEventMarks=[]}) {
   const field = isFieldEvent(event);
 
   const perfs = performances
@@ -885,159 +903,189 @@ function EventProgressChart({event, performances}) {
 
   if (perfs.length < 2) return null;
 
-  const years = [...new Set(perfs.map(p=>p.year))].sort();
-  const marks = perfs.map(p=>p.mark);
+  // Filter out outdoor 2026 — outdoor season hasn't started yet (indoor only as of Mar 2026)
+  const CURRENT_YEAR = 2026;
+  const filteredPerfs = perfs.filter(p => !(p.year === CURRENT_YEAR && p.season === "outdoor"));
+
+  const marks = filteredPerfs.map(p=>p.mark);
+  if (filteredPerfs.length < 2) return null;
   const minMark = Math.min(...marks), maxMark = Math.max(...marks);
   const markRange = maxMark - minMark || 1;
   const prMark = field ? Math.max(...marks) : Math.min(...marks);
 
-  const yearBests = years.map(yr => {
-    const yp = perfs.filter(p=>p.year===yr);
-    const best = field ? yp.reduce((b,p)=>p.mark>b.mark?p:b) : yp.reduce((b,p)=>p.mark<b.mark?p:b);
-    return {yr, mark:best.mark, display:best.mark_display||fmtTime(best.mark)};
+  // ── PR PROGRESSION: build step-line of running best ────────────────────────
+  let runningBest = null;
+  const prPoints = [];
+  filteredPerfs.forEach((p, i) => {
+    if (runningBest === null || (field ? p.mark > runningBest : p.mark < runningBest)) {
+      runningBest = p.mark;
+      prPoints.push({i, mark: p.mark});
+    }
   });
 
-  // ── COLLAPSED: one dot per year best ──────────────────────────────────────
-  const CVW=260, CVH=120, CP={top:18,right:14,bottom:26,left:44};
-  const cx = yr => CP.left + (years.indexOf(yr)/Math.max(years.length-1,1))*(CVW-CP.left-CP.right);
-  const cy = m => { const n=field?(m-minMark)/markRange:1-(m-minMark)/markRange; return CP.top+n*(CVH-CP.top-CP.bottom); };
-  const cLine = yearBests.map(b=>`${cx(b.yr)},${cy(b.mark)}`).join(" ");
+  // Build step-line SVG path
+  const VW=260, VH=180, P={top:20,right:16,bottom:36,left:46};
+  const ex = i => P.left + (i / Math.max(filteredPerfs.length-1, 1)) * (VW - P.left - P.right);
+  const ey = m => { const n=field?(m-minMark)/markRange:1-(m-minMark)/markRange; return P.top+n*(VH-P.top-P.bottom); };
 
-  // ── EXPANDED: every performance, evenly spaced, year labels at boundaries ─
-  const EVW=260, EVH=220, EP={top:18,right:14,bottom:40,left:44};
-  const ex = i => EP.left + (i/Math.max(perfs.length-1,1))*(EVW-EP.left-EP.right);
-  const ey = m => { const n=field?(m-minMark)/markRange:1-(m-minMark)/markRange; return EP.top+n*(EVH-EP.top-EP.bottom); };
-  const eLine = perfs.map((_,i)=>`${ex(i)},${ey(perfs[i].mark)}`).join(" ");
+  let stepPath = "";
+  for (let k=0; k<prPoints.length; k++) {
+    const {i, mark} = prPoints[k];
+    const x = ex(i), y = ey(mark);
+    if (k === 0) {
+      stepPath += `M ${P.left} ${y} H ${x} V ${y}`;
+    } else {
+      stepPath += ` H ${x} V ${y}`;
+    }
+    const nextX = k+1 < prPoints.length ? ex(prPoints[k+1].i) : VW - P.right;
+    stepPath += ` H ${nextX}`;
+  }
 
-  // Year boundary lines & labels: first perf index of each year
-  const yearBounds = years.map(yr => ({yr, i: perfs.findIndex(p=>p.year===yr)}));
+  // Year boundaries
+  const years = [...new Set(filteredPerfs.map(p=>p.year))].sort();
+  const yearBounds = years.map(yr => ({yr, i: filteredPerfs.findIndex(p=>p.year===yr)}));
+
+  // Season/year groups — SB only shown if group has 2+ performances
+  const grouped = {};
+  filteredPerfs.forEach(p => {
+    const key = `${p.year}-${p.season}`;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(p);
+  });
+  const seasonBestSet = new Set();
+  Object.values(grouped).forEach(group => {
+    if (group.length < 2) return; // skip single-perf groups
+    const best = field ? group.reduce((b,p)=>p.mark>b.mark?p:b) : group.reduce((b,p)=>p.mark<b.mark?p:b);
+    seasonBestSet.add(best);
+  });
+
+  // Percentile vs all athletes
+  let percentile = null;
+  if (allEventMarks.length > 1) {
+    const better = field
+      ? allEventMarks.filter(m => m > prMark).length
+      : allEventMarks.filter(m => m < prMark).length;
+    percentile = Math.round((better / allEventMarks.length) * 100);
+  }
 
   return (
-    <div style={{marginBottom:14,borderBottom:`1px solid ${T.border}`,paddingBottom:10}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-        <span style={{color:T.orange,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:700}}>{event}</span>
+    <div style={{marginBottom:16,borderBottom:`1px solid ${T.border}`,paddingBottom:14}}>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{color:T.grayM,fontSize:9,fontFamily:"monospace"}}>
-            {perfs.length} marks · PR: <span style={{color:T.orange,fontWeight:700}}>{fmtTime(prMark)}</span>
-          </span>
-          <button onClick={()=>setExpanded(e=>!e)} style={{
-            background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,
-            color:T.grayM,fontSize:9,cursor:"pointer",padding:"2px 7px",
-            fontFamily:"'Barlow Condensed',sans-serif",
-          }}>{expanded?"▲":"▼"}</button>
+          <span style={{color:T.orange,fontSize:13,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:800}}>{event}</span>
+          <span style={{color:T.orange,fontSize:14,fontWeight:900,fontFamily:"monospace"}}>{fmtTime(prMark)}</span>
+          <span style={{fontSize:8,background:T.orange,color:"#fff",borderRadius:3,padding:"2px 5px",letterSpacing:0.5,fontFamily:"'Barlow Condensed',sans-serif"}}>PR</span>
         </div>
+        <span style={{color:T.grayM,fontSize:10,fontFamily:"monospace"}}>{filteredPerfs.length} marks</span>
       </div>
 
-      {/* COLLAPSED */}
-      {!expanded && (
-        <svg viewBox={`0 0 ${CVW} ${CVH}`} width="100%" style={{display:"block"}}>
-          {[0,0.5,1].map(t=>{
-            const y=CP.top+t*(CVH-CP.top-CP.bottom);
-            const val=field?maxMark-t*markRange:minMark+t*markRange;
-            return <g key={t}>
-              <line x1={CP.left} x2={CVW-CP.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
-              <text x={CP.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
-            </g>;
-          })}
-          {years.map(yr=><text key={yr} x={cx(yr)} y={CVH-6} textAnchor="middle" fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif">{yr}</text>)}
-          <polyline points={cLine} fill="none" stroke={T.orange} strokeWidth={1.8} strokeOpacity={0.6}/>
-          {yearBests.map((b,i)=>{
-            const isPR=b.mark===prMark;
-            return <g key={i}>
-              <circle cx={cx(b.yr)} cy={cy(b.mark)} r={isPR?4.5:3} fill={isPR?T.orange:T.bgCard} stroke={isPR?T.orangeD:T.borderH} strokeWidth={isPR?1.5:1}><title>{b.display} ({b.yr})</title></circle>
-              <text x={cx(b.yr)} y={cy(b.mark)-8} textAnchor="middle" fontSize={8} fill={T.orange} fontFamily="monospace" fontWeight="700">{b.display}</text>
-            </g>;
-          })}
-        </svg>
-      )}
-
-      {/* EXPANDED: all perfs, x = chronological order, year dividers on x-axis */}
-      {expanded && (
-        <>
-          <svg viewBox={`0 0 ${EVW} ${EVH}`} width="100%" style={{display:"block"}}>
-            {/* Y gridlines + labels */}
-            {[0,0.5,1].map(t=>{
-              const y=EP.top+t*(EVH-EP.top-EP.bottom);
-              const val=field?maxMark-t*markRange:minMark+t*markRange;
-              return <g key={t}>
-                <line x1={EP.left} x2={EVW-EP.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
-                <text x={EP.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
-              </g>;
-            })}
-            {/* Year boundary vertical lines + year labels below x-axis */}
-            {yearBounds.map(({yr,i},idx)=>{
-              const x=ex(i);
-              const isLast=idx===yearBounds.length-1;
-              return <g key={yr}>
-                {i>0 && <line x1={x} x2={x} y1={EP.top} y2={EVH-EP.bottom+4} stroke={T.border} strokeWidth={0.8} strokeDasharray="3,2"/>}
-                <text x={isLast ? Math.min(x, EVW-EP.right-4) : x} y={EVH-EP.bottom+14} textAnchor={isLast?"end":"start"} fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif" fontWeight="600">{yr}</text>
-              </g>;
-            })}
-            {/* Connect-the-dots line */}
-            <polyline points={eLine} fill="none" stroke={T.orange} strokeWidth={1.5} strokeOpacity={0.5}/>
-            {/* Individual performance dots */}
-            {perfs.map((p,i)=>{
-              const isPR=p.mark===prMark;
-              return <g key={i}>
-                <circle cx={ex(i)} cy={ey(p.mark)} r={isPR?5:3}
-                  fill={isPR?T.orange:"rgba(0,0,0,0.07)"}
-                  stroke={isPR?T.orangeD:T.borderH}
-                  strokeWidth={isPR?1.5:0.8}>
-                  <title>{p.mark_display||fmtTime(p.mark)}{p.meet_name?` — ${p.meet_name}`:""} ({p.year})</title>
-                </circle>
-                {isPR && <text x={ex(i)} y={ey(p.mark)-9} textAnchor="middle" fontSize={8} fill={T.orange} fontFamily="monospace" fontWeight="700">{p.mark_display||fmtTime(p.mark)}</text>}
-              </g>;
-            })}
-          </svg>
-
-          {/* Performance list */}
-          <div style={{marginTop:6,maxHeight:180,overflowY:"auto",borderTop:`1px solid ${T.border}`,paddingTop:6}}>
-            {(() => {
-              const sorted = [...perfs].reverse();
-              // Compute season bests: best mark per (year+season) combo
-              const seasonBestSet = new Set();
-              const grouped = {};
-              perfs.forEach(p => {
-                const key = `${p.year}-${p.season}`;
-                if (!grouped[key]) grouped[key] = [];
-                grouped[key].push(p);
-              });
-              Object.values(grouped).forEach(group => {
-                const best = field
-                  ? group.reduce((b,p)=>p.mark>b.mark?p:b)
-                  : group.reduce((b,p)=>p.mark<b.mark?p:b);
-                seasonBestSet.add(best);
-              });
-
-              return sorted.map((p, i) => {
-                const isPR = p.mark === prMark;
-                const isSB = !isPR && seasonBestSet.has(p);
-                const prevP = sorted[i - 1];
-                const seasonChanged = i > 0 && prevP && `${prevP.year}-${prevP.season}` !== `${p.year}-${p.season}`;
-                const markColor = isPR ? T.orange : isSB ? T.blueL : T.offWhite;
-                const markWeight = (isPR || isSB) ? 700 : 400;
-                return (
-                  <div key={i}>
-                    {seasonChanged && (
-                      <div style={{borderTop:`1px dashed ${T.border}`,margin:"4px 0"}}/>
-                    )}
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 2px",borderBottom:`1px solid ${T.border}22`}}>
-                      <span style={{fontFamily:"monospace",fontSize:11,color:markColor,fontWeight:markWeight,display:"flex",alignItems:"center",gap:5}}>
-                        {p.mark_display||fmtTime(p.mark)}
-                        {isPR && <span style={{fontSize:8,background:T.orange,color:"#fff",borderRadius:3,padding:"1px 4px",letterSpacing:0.5}}>PR</span>}
-                        {isSB && <span style={{fontSize:8,background:T.blueL,color:"#fff",borderRadius:3,padding:"1px 4px",letterSpacing:0.5}}>SB</span>}
-                      </span>
-                      <span style={{color:T.grayM,fontSize:10,maxWidth:"58%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"right"}}>
-                        {p.meet_name||"—"} <span style={{color:T.grayL,marginLeft:4}}>{p.season ? `${p.season} ` : ""}{p.year}</span>
-                      </span>
-                    </div>
-                  </div>
-                );
-              });
-            })()}
+      {/* Percentile bar */}
+      {percentile !== null && (
+        <div style={{marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+            <span style={{color:T.grayM,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>Faster than</span>
+            <span style={{color:percentile>=75?T.orange:percentile>=50?T.blueL:T.grayM,fontSize:10,fontWeight:700,fontFamily:"monospace"}}>{percentile}% of athletes</span>
           </div>
-        </>
+          <div style={{height:5,background:T.bgCard,borderRadius:3,border:`1px solid ${T.border}`,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${percentile}%`,background:percentile>=75?T.orange:percentile>=50?T.blueL:T.grayM,borderRadius:3,transition:"width 0.4s"}}/>
+          </div>
+        </div>
       )}
+
+      {/* Chart: PR step-line + season-colored dots */}
+      <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" style={{display:"block"}}>
+        {/* Y gridlines */}
+        {[0, 0.5, 1].map(t => {
+          const y = P.top + t*(VH-P.top-P.bottom);
+          const val = field ? maxMark - t*markRange : minMark + t*markRange;
+          return <g key={t}>
+            <line x1={P.left} x2={VW-P.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
+            <text x={P.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
+          </g>;
+        })}
+
+        {/* Year boundary dividers + labels */}
+        {yearBounds.map(({yr,i},idx) => {
+          const x = ex(i);
+          const isLast = idx === yearBounds.length-1;
+          return <g key={yr}>
+            {i > 0 && <line x1={x} x2={x} y1={P.top} y2={VH-P.bottom+4} stroke={T.border} strokeWidth={0.7} strokeDasharray="3,2"/>}
+            <text x={isLast ? Math.min(x, VW-P.right-6) : x} y={VH-P.bottom+14} textAnchor={isLast?"end":"start"} fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif" fontWeight="600">{yr}</text>
+          </g>;
+        })}
+
+        {/* PR step-line */}
+        <path d={stepPath} fill="none" stroke={T.orange} strokeWidth={2} strokeOpacity={0.35} strokeDasharray="none"/>
+
+        {/* Season-colored dots for all perfs */}
+        {filteredPerfs.map((p, i) => {
+          const col = seasonColor(p.season);
+          const isPR = p.mark === prMark;
+          const pp = parsePlace(p.meet_name);
+          return <g key={i}>
+            <circle cx={ex(i)} cy={ey(p.mark)} r={isPR ? 6 : pp ? 4.5 : 3.5}
+              fill={isPR ? T.orange : col}
+              stroke={isPR ? T.orangeD : pp ? placeColor(pp.place)||col : col}
+              strokeWidth={isPR ? 2 : pp ? 2 : 1}
+              fillOpacity={isPR ? 1 : 0.8}>
+              <title>{p.mark_display||fmtTime(p.mark)} · {p.season} {p.year}{p.meet_name ? ` · ${p.meet_name}` : ""}</title>
+            </circle>
+            {isPR && <text x={ex(i)} y={ey(p.mark)-10} textAnchor="middle" fontSize={8} fill={T.orange} fontFamily="monospace" fontWeight="800">{p.mark_display||fmtTime(p.mark)}</text>}
+          </g>;
+        })}
+
+        {/* Season legend bottom-right */}
+        {[["indoor","In"],["outdoor","Out"],["xc","XC"]].map(([s,l],i) => (
+          <g key={s} transform={`translate(${VW-P.right - (2-i)*42}, ${VH-2})`}>
+            <circle cx={0} cy={-3} r={3.5} fill={seasonColor(s)} fillOpacity={0.85}/>
+            <text x={6} y={0} fontSize={8} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif">{l}</text>
+          </g>
+        ))}
+      </svg>
+
+      {/* Performance list */}
+      <div style={{marginTop:8,maxHeight:200,overflowY:"auto",borderTop:`1px solid ${T.border}`,paddingTop:6}}>
+        {(() => {
+          const sorted = [...filteredPerfs].reverse();
+          return sorted.map((p, i) => {
+            const isPR = p.mark === prMark;
+            const isSB = !isPR && seasonBestSet.has(p);
+            const prevP = sorted[i-1];
+            const seasonChanged = i > 0 && prevP && `${prevP.year}-${prevP.season}` !== `${p.year}-${p.season}`;
+            const markColor = isPR ? T.orange : isSB ? T.blueL : T.offWhite;
+            const pp = parsePlace(p.meet_name);
+            const pc = pp ? placeColor(pp.place) : null;
+            const sCol = seasonColor(p.season);
+            return (
+              <div key={i}>
+                {seasonChanged && <div style={{borderTop:`1px dashed ${T.border}`,margin:"5px 0"}}/>}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 2px",borderBottom:`1px solid ${T.border}22`,gap:6}}>
+                  {/* Season color dot */}
+                  <div style={{width:6,height:6,borderRadius:"50%",background:sCol,flexShrink:0}}/>
+                  {/* Mark + badges */}
+                  <span style={{fontFamily:"monospace",fontSize:12,color:markColor,fontWeight:(isPR||isSB)?700:400,display:"flex",alignItems:"center",gap:5,minWidth:60}}>
+                    {p.mark_display||fmtTime(p.mark)}
+                    {isPR && <span style={{fontSize:8,background:T.orange,color:"#fff",borderRadius:3,padding:"1px 4px"}}>PR</span>}
+                    {isSB && <span style={{fontSize:8,background:T.blueL,color:"#fff",borderRadius:3,padding:"1px 4px"}}>SB</span>}
+                  </span>
+                  {/* Place finish pill */}
+                  {pp && (
+                    <span style={{fontSize:10,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",color:pc||T.grayM,background:pc?`${pc}22`:`${T.border}44`,borderRadius:4,padding:"1px 6px",border:`1px solid ${pc||T.border}55`,flexShrink:0}}>
+                      {pp.place}{pp.place===1?"st":pp.place===2?"nd":pp.place===3?"rd":"th"} {pp.round}
+                    </span>
+                  )}
+                  {/* Meet + year */}
+                  <span style={{color:T.grayM,fontSize:10,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"right"}}>
+                    {pp ? p.meet_name.replace(/^\d+(?:st|nd|rd|th)\([^)]+\)\s*/i,"") : (p.meet_name||"—")}
+                    <span style={{color:T.grayL,marginLeft:4}}>{p.year}</span>
+                  </span>
+                </div>
+              </div>
+            );
+          });
+        })()}
+      </div>
     </div>
   );
 }
@@ -1140,7 +1188,7 @@ function PerformanceRangeInput({event, allAthletes, value, onChange}) {
 }
 
 // ── ATHLETE DETAIL ────────────────────────────────────────────────────────────
-function AthleteDetail({athlete, onClose}) {
+function AthleteDetail({athlete, onClose, allAthletes=[]}) {
   if (!athlete) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,padding:24}}>
       <div style={{fontSize:44,opacity:0.15}}>🌍</div>
@@ -1150,36 +1198,34 @@ function AthleteDetail({athlete, onClose}) {
 
   const dist=athlete.hometownCoords?haversine(athlete.hometownCoords,athlete.collegeCoords):0, dc=distColor(dist);
   const colEvents = Object.keys(athlete.collegeTimes);
-  const hsEvents = Object.keys(athlete.hsTimes);
 
   return (
     <div style={{padding:"16px",overflowY:"auto",height:"100%"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+      {/* Name + close */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
         <div>
-          <div style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:21,fontWeight:900,letterSpacing:2}}>{athlete.name}</div>
-          <div style={{color:T.offWhite,fontSize:12,marginTop:2}}>{athlete.college}</div>
-          <div style={{color:T.muted,fontSize:11}}>{athlete.conference}{athlete.collegeYear ? ` · Year ${athlete.collegeYear}` : ""}</div>
+          <div style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:22,fontWeight:900,letterSpacing:2}}>{athlete.name}</div>
+          <div style={{color:T.offWhite,fontSize:13,marginTop:2,fontWeight:600}}>{athlete.college}</div>
+          <div style={{color:T.muted,fontSize:11,marginTop:1}}>{athlete.conference}{athlete.collegeYear ? ` · Year ${athlete.collegeYear}` : ""}{athlete.gender ? ` · ${athlete.gender==="M"?"Men":"Women"}` : ""}</div>
         </div>
         <button onClick={onClose} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,borderRadius:6,cursor:"pointer",width:26,height:26,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
       </div>
 
-      <div style={{background:T.bgCard,border:`1px solid ${dc}55`,borderRadius:9,padding:"10px 12px",marginBottom:12}}>
-        <div style={{color:T.muted,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,textTransform:"uppercase"}}>Recruitment Distance</div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+      {/* Recruitment distance */}
+      <div style={{background:T.bgCard,border:`1px solid ${dc}55`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
-            <div style={{color:dc,fontSize:24,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1}}>{fmtDist(dist)}</div>
-            <div style={{color:T.muted,fontSize:10,marginTop:3}}>{athlete.hometown} → {athlete.college}</div>
+            <div style={{color:T.muted,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,textTransform:"uppercase",marginBottom:3}}>Recruitment Distance</div>
+            <div style={{color:dc,fontSize:22,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif",lineHeight:1}}>{fmtDist(dist)}</div>
+            <div style={{color:T.muted,fontSize:10,marginTop:3}}>{athlete.hometown||"Unknown"} → {athlete.college}</div>
           </div>
-          <div style={{fontSize:26}}>{dist<100?"🏠":dist<400?"🚗":dist<800?"✈️":"🌎"}</div>
-        </div>
-        <div style={{marginTop:7,display:"flex",gap:5,alignItems:"center"}}>
-          <div style={{width:7,height:7,borderRadius:"50%",background:dc}}/>
-          <span style={{color:dc,fontSize:11}}>{distLabel(dist)}</span>
+          <div style={{fontSize:28}}>{dist<100?"🏠":dist<400?"🚗":dist<800?"✈️":"🌎"}</div>
         </div>
       </div>
 
+      {/* Meta grid */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:12}}>
-        {[{l:"Hometown",v:athlete.hometown||"—"},{l:"High School",v:athlete.hsName||"—"},{l:"HS Grad",v:athlete.hsYear||"—"},{l:"College Year",v:athlete.collegeYear?`Year ${athlete.collegeYear}`:"—"}].map(({l,v})=>(
+        {[{l:"Hometown",v:athlete.hometown||"—"},{l:"HS Grad",v:athlete.hsYear||"—"},{l:"College Year",v:athlete.collegeYear?`Year ${athlete.collegeYear}`:"—"},{l:"Gender",v:athlete.gender==="M"?"Men":"Women"}].map(({l,v})=>(
           <div key={l} style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:6,padding:"7px 9px"}}>
             <div style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase"}}>{l}</div>
             <div style={{color:T.offWhite,fontSize:11,marginTop:2,fontWeight:500}}>{v}</div>
@@ -1187,88 +1233,31 @@ function AthleteDetail({athlete, onClose}) {
         ))}
       </div>
 
-      {athlete.events.length > 0 && (
-        <div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:14}}>
-          {athlete.events.map(e=>{
-            const cfg=EVENTS_CFG.find(x=>x.id===e);
-            const col=cfg?.season==="indoor"?T.blueL:cfg?.season==="outdoor"?T.green:T.orange;
-            return <span key={e} style={{background:`${col}22`,color:col,borderRadius:4,padding:"2px 8px",fontSize:11,border:`1px solid ${col}44`,fontFamily:"'Barlow Condensed',sans-serif"}}>{e}</span>;
-          })}
-        </div>
+      {athlete.tfrrsUrl && (
+        <a href={athlete.tfrrsUrl} target="_blank" rel="noopener noreferrer"
+          style={{display:"block",marginBottom:14,textAlign:"center",color:T.orange,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textDecoration:"none",border:`1px solid ${T.orange}44`,borderRadius:6,padding:"5px 0"}}>
+          View on TFRRS →
+        </a>
       )}
 
-      {(colEvents.length > 0 || hsEvents.length > 0) && (
-        <>
-          <SectionHead>Best Performances</SectionHead>
-          {colEvents.length > 0 && (
-            <div style={{marginBottom:10}}>
-              <div style={{color:T.dim,fontSize:9,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>College PRs</div>
-              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                {colEvents.map(ev=>(
-                  <div key={ev} style={{display:"flex",gap:4,alignItems:"baseline"}}>
-                    <span style={{color:T.muted,fontSize:10,fontFamily:"'Barlow Condensed',sans-serif"}}>{ev}</span>
-                    <span style={{color:T.orange,fontSize:13,fontWeight:800,fontFamily:"monospace"}}>{fmtTime(athlete.collegeTimes[ev])}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {hsEvents.length > 0 && (
-            <div style={{marginBottom:10}}>
-              <div style={{color:T.dim,fontSize:9,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>HS Best Marks</div>
-              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                {hsEvents.map(ev=>(
-                  <div key={ev} style={{display:"flex",gap:4,alignItems:"baseline"}}>
-                    <span style={{color:T.muted,fontSize:10,fontFamily:"'Barlow Condensed',sans-serif"}}>{ev}</span>
-                    <span style={{color:T.offWhite,fontSize:13,fontWeight:800,fontFamily:"monospace"}}>{fmtTime(athlete.hsTimes[ev])}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {colEvents.filter(ev=>athlete.hsTimes[ev]).length > 0 && (
-            <div style={{marginTop:6,padding:"8px 10px",background:T.bgCard,borderRadius:7,border:`1px solid ${T.border}`}}>
-              <div style={{color:T.dim,fontSize:9,letterSpacing:1,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>HS Best → College PR</div>
-              {colEvents.filter(ev=>athlete.hsTimes[ev]).map(ev=>{
-                const diff = athlete.hsTimes[ev] - athlete.collegeTimes[ev];
-                return (
-                  <div key={ev} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0"}}>
-                    <span style={{color:T.muted,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{ev}</span>
-                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                      <span style={{color:T.dim,fontSize:11,fontFamily:"monospace"}}>{fmtTime(athlete.hsTimes[ev])}</span>
-                      <span style={{color:T.dim,fontSize:10}}>→</span>
-                      <span style={{color:T.orange,fontSize:12,fontWeight:800,fontFamily:"monospace"}}>{fmtTime(athlete.collegeTimes[ev])}</span>
-                      {diff>0 && <span style={{color:T.green,fontSize:10,fontFamily:"monospace",background:`${T.green}18`,borderRadius:3,padding:"1px 4px"}}>▼{diff.toFixed(2)}</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {athlete.tfrrsUrl && (
-            <a href={athlete.tfrrsUrl} target="_blank" rel="noopener noreferrer"
-              style={{display:"block",marginTop:12,textAlign:"center",color:T.orange,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textDecoration:"none",border:`1px solid ${T.orange}44`,borderRadius:6,padding:"5px 0"}}>
-              View on TFRRS →
-            </a>
-          )}
-        </>
-      )}
-
-      {/* Year-over-year progress charts */}
+      {/* Charts — one per event, always shown */}
       {athlete.rawPerformances?.length > 0 && (() => {
-        const eventsWithData = [...new Set(athlete.rawPerformances.filter(p=>p.year).map(p=>p.event))];
-        const chartableEvents = eventsWithData.filter(ev => {
-          const years = new Set(athlete.rawPerformances.filter(p=>p.event===ev && p.year).map(p=>p.year));
+        const chartableEvents = [...new Set(athlete.rawPerformances.filter(p=>p.year && !(p.year===2026 && p.season==="outdoor")).map(p=>p.event))].filter(ev => {
+          const years = new Set(athlete.rawPerformances.filter(p=>p.event===ev && p.year && !(p.year===2026 && p.season==="outdoor")).map(p=>p.year));
           return years.size >= 2;
         });
         if (!chartableEvents.length) return null;
         return (
           <>
-            <SectionHead>Year-over-Year Progress</SectionHead>
-            <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:4}}>
-              {chartableEvents.map(ev => (
-                <EventProgressChart key={ev} event={ev} performances={athlete.rawPerformances}/>
-              ))}
+            <SectionHead>Progress & Performances</SectionHead>
+            <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"12px 14px",marginBottom:4}}>
+              {chartableEvents.map(ev => {
+                // Build allEventMarks from all athletes for percentile
+                const allEventMarks = allAthletes
+                  .map(a => a.collegeTimes?.[ev])
+                  .filter(Boolean);
+                return <EventProgressChart key={ev} event={ev} performances={athlete.rawPerformances} allEventMarks={allEventMarks}/>;
+              })}
             </div>
           </>
         );
@@ -1522,7 +1511,7 @@ export default function App() {
             </div>
             {!rightCollapsed && (
               <div style={{flex:1,overflowY:"auto"}}>
-                {rightTab==="athlete"  && <AthleteDetail athlete={selectedAthlete} onClose={()=>setSelectedAthlete(null)}/>}
+                {rightTab==="athlete"  && <AthleteDetail athlete={selectedAthlete} onClose={()=>setSelectedAthlete(null)} allAthletes={athletes}/>}
                 {rightTab==="college"  && <CollegePullPanel athletes={filtered} focusedCollege={focusedCollege} onFocusCollege={handleFocusCollege}/>}
                 {rightTab==="hometown" && <HometownPanel athletes={filtered} focusedHometown={focusedHometown} onFocusHometown={handleFocusHometown}/>}
                 {rightTab==="heatmap"  && <HeatmapPanel athletes={filtered}/>}
