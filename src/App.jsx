@@ -311,7 +311,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     projRef.current=proj;
     const path=d3.geoPath().projection(proj);
     const g=svg.append("g");
-    const px=([lat,lon])=>proj([lon,lat]);
+    const px=(coord)=>{ if(!coord) return null; const [lat,lon]=coord; return proj([lon,lat]); };
     const hasStateFilter = selectedStates.length > 0;
 
     g.selectAll("path.state").data(geo.features).join("path")
