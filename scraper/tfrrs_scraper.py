@@ -375,42 +375,58 @@ def scrape_athlete(info: dict) -> dict | None:
                     hometown_state = state
                     break
 
+    INDOOR_MONTHS  = {11, 12, 1, 2, 3}   # Nov–Mar
+    XC_MONTHS      = {8, 9, 10}            # Aug–Oct
+    # outdoor = Apr–Jul (default)
+
+    def infer_season(date_str: str) -> str:
+        """Infer indoor/outdoor/xc from a date string like 'Feb 13-14, 2026'."""
+        m = re.search(
+            r'\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|'
+            r'Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b',
+            date_str, re.IGNORECASE
+        )
+        if not m:
+            return "outdoor"
+        month_str = m.group(1)[:3].lower()
+        month_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
+                     "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
+        month = month_map.get(month_str, 0)
+        if month in INDOOR_MONTHS:  return "indoor"
+        if month in XC_MONTHS:      return "xc"
+        return "outdoor"
+
     performances = []
     events_set = set()
     current_year = None
     current_season = "outdoor"
 
     for table in soup.find_all("table"):
-        prev = table.find_previous(["h3", "h4", "h5", "span", "div"])
-        if prev:
-            hdr = prev.get_text(" ", strip=True).lower()
-            if "indoor" in hdr:
-                current_season = "indoor"
-            elif "cross country" in hdr or " xc" in hdr:
-                current_season = "xc"
-            else:
-                current_season = "outdoor"
-
+        meet_date_str = ""
         for row in table.find_all("tr"):
-            cells = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
+            cells = [td.get_text(" ", strip=True) for td in row.find_all(["td", "th"])]
             if not cells:
                 continue
 
+            # Detect year and season from date strings in any cell
             for cell in cells:
-                yr = re.search(r"\b(20(?:1[5-9]|2[0-6]))\b", cell)
+                yr = re.search(r"\b(20(?:1[5-9]|2[0-9]))\b", cell)
                 if yr:
                     current_year = int(yr.group(1))
+                # If this cell has a month name it's a date — use it for season
+                if re.search(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)', cell, re.I):
+                    current_season = infer_season(cell)
 
             if len(cells) < 2:
                 continue
 
             for i, cell in enumerate(cells):
-                event_norm = EVENT_MAP.get(cell)
+                event_norm = EVENT_MAP.get(cell.strip())
                 if event_norm and i + 1 < len(cells):
-                    mark_raw = cells[i + 1]
+                    mark_raw = cells[i + 1].strip()
                     mark_num = parse_mark(mark_raw)
                     if mark_num and 0 < mark_num < 100000:
-                        meet = cells[i + 2] if i + 2 < len(cells) else ""
+                        meet = cells[i + 2].strip() if i + 2 < len(cells) else ""
                         performances.append({
                             "event": event_norm,
                             "mark": mark_num,
@@ -493,7 +509,11 @@ def save_athlete(data: dict) -> tuple[bool, bool]:
 
 
 def get_scraped_ids() -> set:
+    """Returns set of source_ids that were scraped within the last 24 hours.
+    Athletes updated more than 24 hours ago will be re-scraped to pick up new performances."""
     try:
+        from datetime import timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         ids = set()
         page = 0
         PAGE = 1000
@@ -501,6 +521,7 @@ def get_scraped_ids() -> set:
             result = supabase.table("athletes") \
                 .select("source_id") \
                 .eq("source", "tfrrs") \
+                .gt("updated_at", cutoff) \
                 .range(page * PAGE, (page + 1) * PAGE - 1) \
                 .execute()
             batch = result.data or []
@@ -508,7 +529,7 @@ def get_scraped_ids() -> set:
             if len(batch) < PAGE:
                 break
             page += 1
-        log.info(f"Loaded {len(ids)} existing athlete IDs from DB")
+        log.info(f"Loaded {len(ids)} recently-scraped athlete IDs (< 24h) — skipping these")
         return ids
     except Exception as e:
         log.error(f"Could not load existing IDs: {e}")
@@ -534,7 +555,7 @@ def run_scraper(group: str = "all"):
         log.info(f"Scraping ALL {len(teams_to_scrape)} schools")
 
     already_done = get_scraped_ids()
-    log.info(f"Already in DB: {len(already_done)} athletes — skipping these")
+    log.info(f"Athletes scraped in last 24h: {len(already_done)} — skipping these, re-scraping the rest")
 
     saved = skipped = errors = field_only = found_teams = missing_teams = 0
 
