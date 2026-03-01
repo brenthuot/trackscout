@@ -39,22 +39,29 @@ HEADERS = {
 }
 RATE_LIMIT_SECONDS = 2.5
 
-# ── CONFERENCE GROUPS for parallel matrix runs ────────────────────────────────
-# Each group runs on its own GitHub Actions runner (own IP) — safe to parallelize.
+# ── CONFERENCE GROUPS ─────────────────────────────────────────────────────────
+# Rebalanced: each group pairs a large conference with a smaller one
+# so all 6 GitHub Actions runners take roughly equal time.
+#
+# Old Group 6 was WCC alone (8 schools) — finished in minutes.
+# New groupings by estimated athlete volume:
+#   Group 1: SEC (14) + WCC (8)          = 22 schools  ~large + small
+#   Group 2: Big Ten (14) + Big Sky (11) = 25 schools  ~large + small
+#   Group 3: ACC (15) + Ivy (8)          = 23 schools  ~large + small
+#   Group 4: Big 12 (10) + A10 (12)      = 22 schools  ~medium + medium
+#   Group 5: Pac-12 (12) + American (12) = 24 schools  ~medium + medium
+#   Group 6: Mountain West (12) + Big East (11) = 23 schools  ~medium + medium
+
 CONFERENCE_GROUPS = {
-    "1": ["SEC", "Big Ten"],
-    "2": ["ACC", "Big 12"],
-    "3": ["Pac-12", "Ivy League", "Big East"],
-    "4": ["Mountain West", "Big Sky"],
-    "5": ["American", "Atlantic 10"],
-    "6": ["West Coast"],
+    "1": ["SEC", "West Coast"],
+    "2": ["Big Ten", "Big Sky"],
+    "3": ["ACC", "Ivy League"],
+    "4": ["Big 12", "Atlantic 10"],
+    "5": ["Pac-12", "American"],
+    "6": ["Mountain West", "Big East"],
 }
 
 # ── TEAM DEFINITIONS ──────────────────────────────────────────────────────────
-# Format: "Display Name": (state_code, slug, conference)
-# URL built as: /teams/tf/{state_code}_college_{m/f}_{slug}.html
-# Verified pattern from: NY_college_m_Syracuse, CA_college_m_UCLA
-
 TEAMS = {
     # ── SEC ───────────────────────────────────────────────────────────────────
     "Alabama":            ("AL", "Alabama",            "SEC"),
@@ -221,9 +228,11 @@ TEAMS = {
 }
 
 # ── EVENT MAP ─────────────────────────────────────────────────────────────────
+# Added short-form hurdle aliases (60H, 110H, 400H) — these are what TFRRS
+# actually uses in their results tables, not the long "X Hurdles" form.
 EVENT_MAP = {
     "60": "60m", "60m": "60m", "60 Meters": "60m",
-    "60 Hurdles": "60mH", "60m Hurdles": "60mH",
+    "60H": "60mH", "60 Hurdles": "60mH", "60m Hurdles": "60mH",
     "100": "100m", "100m": "100m", "100 Meters": "100m",
     "200": "200m", "200m": "200m", "200 Meters": "200m",
     "400": "400m", "400m": "400m", "400 Meters": "400m",
@@ -234,14 +243,13 @@ EVENT_MAP = {
     "3000 Steeplechase": "3000SC", "3000m Steeplechase": "3000SC",
     "5000": "5000m", "5000m": "5000m", "5,000": "5000m",
     "10,000": "10000m", "10000": "10000m", "10000m": "10000m",
-    "110 Hurdles": "110mH", "110m Hurdles": "110mH",
-    "100 Hurdles": "100mH", "100m Hurdles": "100mH",
-    "400 Hurdles": "400mH", "400m Hurdles": "400mH",
+    "110H": "110mH", "110 Hurdles": "110mH", "110m Hurdles": "110mH",
+    "100H": "100mH", "100 Hurdles": "100mH", "100m Hurdles": "100mH",
+    "400H": "400mH", "400 Hurdles": "400mH", "400m Hurdles": "400mH",
     "High Jump": "HJ", "Long Jump": "LJ", "Triple Jump": "TJ",
     "Pole Vault": "PV", "Shot Put": "SP", "Discus": "DT",
     "Hammer": "HT", "Javelin": "JT", "Weight Throw": "WT",
     "Heptathlon": "Hept", "Decathlon": "Dec",
-    # Relays intentionally excluded — we don't track relay splits per individual
 }
 
 GENDERS = [("m", "Men"), ("f", "Women")]
@@ -295,33 +303,27 @@ def scrape_athlete(info: dict) -> dict | None:
     if not soup:
         return None
 
-    # Name — prefer the cleaned name from the roster; fall back to page header
-    name = info["name"]  # already stripped and title-cased from roster
+    name = info["name"]
     for tag in soup.find_all(["h1", "h2", "h3"]):
         t = tag.get_text(strip=True)
         if len(t) > 3 and len(t) < 80 and not any(x in t.lower() for x in ["tfrrs", "track", "field"]):
-            # Strip any trailing class tag that TFRRS puts on the page header too
             cleaned = re.sub(r'\s*\([^)]+\)\s*$', '', t).strip()
             cleaned = cleaned.split("|")[0].strip()
             if cleaned:
                 name = " ".join(w.capitalize() for w in cleaned.split())
             break
 
-    # college_year and hs_grad_year — use roster values, but if missing try page
     college_year = info.get("college_year")
     hs_grad_year = info.get("hs_grad_year")
     SEASON_YEAR = 2026
 
-    # If roster didn't give us college_year, scan the athlete page header/bio area
     if college_year is None:
         CLASS_MAP = {"fr": 1, "so": 2, "jr": 3, "sr": 4, "grad": 5, "5th": 5, "6th": 6}
         page_text = soup.get_text(" ")
-        # Try "SR-4", "JR-3" style first
         m = re.search(r'\b(?:SR|JR|SO|FR|Grad|5th|6th)-(\d)\b', page_text, re.IGNORECASE)
         if m:
             college_year = int(m.group(1))
         else:
-            # Try standalone class word: "Senior", "Junior", "Sophomore", "Freshman"
             m = re.search(
                 r'\b(Senior|Junior|Sophomore|Freshman|Graduate|5th Year|6th Year)\b',
                 page_text, re.IGNORECASE
@@ -331,31 +333,24 @@ def scrape_athlete(info: dict) -> dict | None:
                 word_map = {"senior": 4, "junior": 3, "sophomore": 2, "freshman": 1, "graduate": 5}
                 college_year = word_map.get(word)
             else:
-                # Try bare abbreviation in a small text block: "SR", "JR", "SO", "FR"
                 m = re.search(r'\b(SR|JR|SO|FR)\b', page_text[:2000])
                 if m:
                     college_year = CLASS_MAP.get(m.group(1).lower())
         if college_year and 1 <= college_year <= 6 and hs_grad_year is None:
             hs_grad_year = SEASON_YEAR - college_year
 
-    # College & hometown
     college = info.get("college", "")
     hometown = ""
     hometown_state = ""
 
-    # Hometown: TFRRS usually has "City, ST" somewhere in the bio section.
-    # Use a broad pattern — allow letters, spaces, hyphens, apostrophes, periods, numbers.
-    # Match "Anything, XX" where XX is a 2-letter US state abbreviation.
     US_STATES = {
         "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
         "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
         "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
         "VA","WA","WV","WI","WY","DC",
     }
-    # First pass: look for "City, ST" pattern in all text nodes
     for text in soup.stripped_strings:
         t = text.strip()
-        # Pattern: one or more words (allowing . ' -), comma, space, 2 uppercase letters
         m = re.match(r'^([\w\s\.\'\-]{2,40}),\s+([A-Z]{2})$', t)
         if m:
             city, state = m.group(1).strip(), m.group(2)
@@ -364,7 +359,6 @@ def scrape_athlete(info: dict) -> dict | None:
                 hometown_state = state
                 break
 
-    # Second pass: look in <li>, <dd>, <td> elements for inline "City, ST" patterns
     if not hometown:
         for tag in soup.find_all(["li", "dd", "td", "span", "p"]):
             t = tag.get_text(strip=True)
@@ -376,14 +370,12 @@ def scrape_athlete(info: dict) -> dict | None:
                     hometown_state = state
                     break
 
-    # Performances
     performances = []
     events_set = set()
     current_year = None
     current_season = "outdoor"
 
     for table in soup.find_all("table"):
-        # Detect season from surrounding header
         prev = table.find_previous(["h3", "h4", "h5", "span", "div"])
         if prev:
             hdr = prev.get_text(" ", strip=True).lower()
@@ -399,7 +391,6 @@ def scrape_athlete(info: dict) -> dict | None:
             if not cells:
                 continue
 
-            # Look for year in any cell
             for cell in cells:
                 yr = re.search(r"\b(20(?:1[5-9]|2[0-6]))\b", cell)
                 if yr:
@@ -408,7 +399,6 @@ def scrape_athlete(info: dict) -> dict | None:
             if len(cells) < 2:
                 continue
 
-            # Find event + mark pairs
             for i, cell in enumerate(cells):
                 event_norm = EVENT_MAP.get(cell)
                 if event_norm and i + 1 < len(cells):
@@ -482,10 +472,8 @@ def get_scraped_ids() -> set:
 def run_scraper(group: str = "all"):
     log.info("=" * 60)
     log.info(f"Run Stats TFRRS Scraper v3 — Group: {group}")
-    log.info("URL pattern: /teams/tf/{STATE}_college_{m/f}_{Slug}.html")
     log.info("=" * 60)
 
-    # Filter teams by conference group if specified
     if group != "all" and group in CONFERENCE_GROUPS:
         target_confs = set(CONFERENCE_GROUPS[group])
         teams_to_scrape = {
@@ -504,7 +492,6 @@ def run_scraper(group: str = "all"):
     saved = skipped = errors = found_teams = missing_teams = 0
 
     for school, (state, slug, conference) in teams_to_scrape.items():
-
         for gender_code, gender_label in GENDERS:
             url = f"{BASE_URL}/teams/tf/{state}_college_{gender_code}_{slug}.html"
             log.info(f"Fetching: {school} {gender_label} → {url}")
@@ -529,10 +516,6 @@ def run_scraper(group: str = "all"):
             found_teams += 1
             soup = BeautifulSoup(resp.text, "lxml")
 
-            # Collect athlete links from roster
-            # Current academic season: 2025–26
-            # Formula: hs_grad_year = 2026 - college_year
-            # e.g. SR-4 → college_year=4, hs_grad_year=2022
             SEASON_YEAR = 2026
             athlete_links = []
             seen_urls = set()
@@ -545,21 +528,15 @@ def run_scraper(group: str = "all"):
                 if full_url not in seen_urls:
                     seen_urls.add(full_url)
 
-                    # Clean name — strip any class tag if it happened to be in link text
                     name_clean = re.sub(r'\s*\([^)]+\)\s*$', '', name_raw).strip()
                     name_clean = " ".join(w.capitalize() for w in name_clean.split())
 
-                    # The class tag (SR-4, JR-3, etc.) is usually in a sibling <td>,
-                    # not inside the <a> tag itself. Search the whole parent row.
                     college_year = None
                     hs_grad_year = None
 
-                    # Walk up to the nearest <tr> and grab all text from it
                     row = link.find_parent("tr")
                     row_text = row.get_text(" ", strip=True) if row else name_raw
 
-                    # Match patterns like: SR-4, JR-3, SO-2, FR-1, 5th-5, Grad-5
-                    # Also plain year numbers standing alone: "4" "3" "2" "1"
                     class_match = re.search(
                         r'\b(?:SR|JR|SO|FR|Grad|5th|6th)-(\d)\b'
                         r'|\((?:SR|JR|SO|FR|Grad|RS)[^\)]*-(\d)\)',
@@ -569,7 +546,6 @@ def run_scraper(group: str = "all"):
                         digit = class_match.group(1) or class_match.group(2)
                         college_year = int(digit)
                     else:
-                        # Fallback: look for a standalone digit 1-6 in parentheses e.g. (4)
                         fallback = re.search(r'\(([1-6])\)', row_text)
                         if fallback:
                             college_year = int(fallback.group(1))
@@ -616,9 +592,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TFRRS Scraper")
     parser.add_argument(
         "--group", default="all",
-        help="Conference group to scrape: 1-6 or 'all'. "
-             "Groups: 1=SEC+Big10, 2=ACC+Big12, 3=Pac12+Ivy+BigEast, "
-             "4=MWC+BigSky, 5=American+A10, 6=WCC"
+        help="Conference group: 1-6 or 'all'. "
+             "1=SEC+WCC, 2=BigTen+BigSky, 3=ACC+Ivy, "
+             "4=Big12+A10, 5=Pac12+American, 6=MWC+BigEast"
     )
     args = parser.parse_args()
     run_scraper(group=args.group)
