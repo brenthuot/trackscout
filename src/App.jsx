@@ -274,7 +274,8 @@ const haversine = (p1,p2) => { if(!p1||!p2) return 0; const [a,b]=p1,[c,d]=p2,R=
 const fmtDist = d => d ? `${Math.round(d).toLocaleString()} mi` : "—";
 const fmtTime = v => { if (!v) return "—"; if (v > 200) { const m=Math.floor(v/60); return `${m}:${(v%60).toFixed(2).padStart(5,"0")}`; } return v.toFixed(2); };
 const distBucket = d => d<100?"local":d<400?"regional":d<800?"far":"extreme";
-const distColor = d => !d ? T.dim : d<100?T.green:d<400?T.yellow:d<800?T.orange:T.red;
+const DIST_COLORS = {local:"#22C55E", regional:"#3B82F6", far:"#F76900", extreme:"#EF4444"};
+const distColor = d => !d ? T.dim : d<100?DIST_COLORS.local:d<400?DIST_COLORS.regional:d<800?DIST_COLORS.far:DIST_COLORS.extreme;
 const distLabel = d => !d ? "Unknown" : d<100?"Local (<100 mi)":d<400?"Regional (100-400 mi)":d<800?"Long Haul (400-800 mi)":"Cross-Country (800+ mi)";
 
 // ── HEATMAP CANVAS ────────────────────────────────────────────────────────────
@@ -1385,19 +1386,19 @@ export default function App() {
 
           <div style={{display:"flex",background:T.bgCard,borderRadius:7,border:`1px solid ${T.border}`,overflow:"hidden"}}>
             {[["flows","Flows"],["hometown","Home"],["college","College"],["heatmap","Heat"]].map(([m,l])=>(
-              <button key={m} onClick={()=>switchMapMode(m)} style={{background:mapMode===m?T.orange:"transparent",border:"none",color:mapMode===m?T.white:T.muted,padding:"6px 12px",fontSize:11,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.15s",fontWeight:mapMode===m?700:400}}>{l}</button>
+              <button key={m} onClick={()=>switchMapMode(m)} style={{background:mapMode===m?T.orange:"transparent",border:"none",color:mapMode===m?T.white:T.muted,padding:"6px 14px",fontSize:13,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.15s",fontWeight:mapMode===m?700:400}}>{l}</button>
             ))}
           </div>
 
-          <div style={{background:T.orangeGlow,border:`1px solid ${T.orange}44`,borderRadius:7,padding:"5px 12px",textAlign:"center"}}>
-            <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase"}}>Avg Distance</div>
-            <div style={{color:T.orange,fontSize:16,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif"}}>{overallAvg.toLocaleString()} mi</div>
+          <div style={{background:T.orangeGlow,border:`1px solid ${T.orange}44`,borderRadius:7,padding:"5px 14px",textAlign:"center"}}>
+            <div style={{color:T.muted,fontSize:10,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase"}}>Avg Distance</div>
+            <div style={{color:T.orange,fontSize:20,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif"}}>{overallAvg.toLocaleString()} mi</div>
           </div>
 
-          <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:7,padding:"5px 12px",textAlign:"center",minWidth:80}}>
-            <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase"}}>Athletes</div>
-            <div style={{color:T.offWhite,fontSize:16,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif"}}>
-              {loading ? <span style={{color:T.grayM,fontSize:12}}>...</span> : <>{filtered.length}<span style={{color:T.dim,fontSize:11}}>/{athletes.length}</span></>}
+          <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:7,padding:"5px 14px",textAlign:"center",minWidth:90}}>
+            <div style={{color:T.muted,fontSize:10,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase"}}>Athletes</div>
+            <div style={{color:T.offWhite,fontSize:20,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif"}}>
+              {loading ? <span style={{color:T.grayM,fontSize:14}}>...</span> : <>{filtered.length}<span style={{color:T.dim,fontSize:13}}>/{athletes.length}</span></>}
             </div>
           </div>
         </div>
@@ -1489,7 +1490,7 @@ export default function App() {
                 <div>
                   <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Arc = Distance</div>
                   <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-                    {[[T.green,"Local"],[T.yellow,"Regional"],[T.orange,"Long Haul"],[T.red,"Cross-Country"]].map(([c,l])=>(
+                    {[[DIST_COLORS.local,"Local"],[DIST_COLORS.regional,"Regional"],[DIST_COLORS.far,"Long Haul"],[DIST_COLORS.extreme,"Cross-Country"]].map(([c,l])=>(
                       <div key={l} style={{display:"flex",gap:5,alignItems:"center"}}><div style={{width:18,height:2,background:c,borderRadius:1}}/><span style={{color:T.muted,fontSize:10}}>{l}</span></div>
                     ))}
                   </div>
