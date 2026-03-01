@@ -544,7 +544,7 @@ function FilterControls({filters, setFilters, showSeason=false, selectedStates=[
           <div style={{marginTop:8,padding:"8px 10px",background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:7}}>
             <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Performance Range</div>
             {filters.events.map(ev => (
-              <DualRangeSlider
+              <PerformanceRangeInput
                 key={ev}
                 event={ev}
                 allAthletes={allAthletes}
@@ -904,49 +904,98 @@ function EventProgressChart({event, performances}) {
 }
 
 // ── DUAL RANGE SLIDER ─────────────────────────────────────────────────────────
-function DualRangeSlider({event, allAthletes, value, onChange}) {
+// Parse a time string like "4:30.25" or "13.45" or "6.52" into seconds (float)
+function parseTimeInput(s) {
+  if (!s || !s.trim()) return null;
+  s = s.trim();
+  // mm:ss.ms  or  h:mm:ss.ms
+  if (s.includes(":")) {
+    const parts = s.split(":");
+    if (parts.length === 2) {
+      const [m, sec] = parts;
+      const val = parseFloat(m) * 60 + parseFloat(sec);
+      return isNaN(val) ? null : val;
+    }
+    if (parts.length === 3) {
+      const [h, m, sec] = parts;
+      const val = parseFloat(h) * 3600 + parseFloat(m) * 60 + parseFloat(sec);
+      return isNaN(val) ? null : val;
+    }
+  }
+  const val = parseFloat(s);
+  return isNaN(val) ? null : val;
+}
+
+function PerformanceRangeInput({event, allAthletes, value, onChange}) {
+  const field = isFieldEvent(event);
   const marks = allAthletes.map(a => a.collegeTimes[event]).filter(Boolean);
   if (marks.length < 2) return null;
 
-  // Use reduce instead of Math.min/max(...marks) — spread crashes on large arrays
   const globalMin = marks.reduce((a,b) => Math.min(a,b), marks[0]);
   const globalMax = marks.reduce((a,b) => Math.max(a,b), marks[0]);
-  if (globalMin === globalMax) return null;
 
-  const [lo, hi] = value || [globalMin, globalMax];
-  const pct = v => ((v - globalMin) / (globalMax - globalMin) * 100).toFixed(1) + "%";
+  const [loStr, setLoStr] = useState(value ? fmtTime(value[0]) : "");
+  const [hiStr, setHiStr] = useState(value ? fmtTime(value[1]) : "");
+  const [loErr, setLoErr] = useState(false);
+  const [hiErr, setHiErr] = useState(false);
+
+  const commit = (newLoStr, newHiStr) => {
+    const lo = parseTimeInput(newLoStr);
+    const hi = parseTimeInput(newHiStr);
+    const loOk = lo !== null && lo >= 0;
+    const hiOk = hi !== null && hi >= 0;
+    setLoErr(newLoStr !== "" && !loOk);
+    setHiErr(newHiStr !== "" && !hiOk);
+    if (newLoStr === "" && newHiStr === "") {
+      onChange(null); // clear filter
+    } else if (loOk || hiOk) {
+      const effectiveLo = loOk ? lo : globalMin;
+      const effectiveHi = hiOk ? hi : globalMax;
+      onChange([Math.min(effectiveLo, effectiveHi), Math.max(effectiveLo, effectiveHi)]);
+    }
+  };
+
+  const placeholder = field ? "e.g. 6.52" : event.includes("m") && !event.includes("H") && parseFloat(event) >= 800
+    ? "e.g. 4:05.00" : "e.g. 10.50";
+
+  const inputStyle = (err) => ({
+    flex:1, background: err ? "#FFF0F0" : T.bg,
+    border:`1px solid ${err ? T.red : T.border}`,
+    borderRadius:5, padding:"4px 6px", fontSize:11,
+    color: T.offWhite, fontFamily:"monospace",
+    outline:"none", minWidth:0,
+  });
 
   return (
-    <div style={{padding:"6px 0 10px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-        <span style={{color:T.orange,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:700}}>{event} range</span>
-        <span style={{color:T.muted,fontSize:9,fontFamily:"monospace"}}>
-          {fmtTime(lo)} – {fmtTime(hi)}
+    <div style={{marginBottom:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <span style={{color:T.orange,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:700}}>{event}</span>
+        <span style={{color:T.dim,fontSize:8,fontFamily:"monospace"}}>
+          {fmtTime(globalMin)} – {fmtTime(globalMax)}
         </span>
       </div>
-      <div style={{position:"relative",height:20,marginTop:4}}>
-        {/* Track */}
-        <div style={{position:"absolute",top:"50%",left:0,right:0,height:3,background:T.border,borderRadius:2,transform:"translateY(-50%)"}}/>
-        {/* Active range fill */}
-        <div style={{position:"absolute",top:"50%",left:pct(lo),width:`calc(${pct(hi)} - ${pct(lo)})`,height:3,background:T.orange,borderRadius:2,transform:"translateY(-50%)"}}/>
-        {/* Low handle */}
-        <input type="range" min={globalMin} max={globalMax} step={(globalMax-globalMin)/200}
-          value={lo}
-          onChange={e => { const v=+e.target.value; if(v<=hi) onChange([v,hi]); }}
-          style={{position:"absolute",width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:lo>globalMin+0.8*(globalMax-globalMin)?2:1}}/>
-        {/* High handle */}
-        <input type="range" min={globalMin} max={globalMax} step={(globalMax-globalMin)/200}
-          value={hi}
-          onChange={e => { const v=+e.target.value; if(v>=lo) onChange([lo,v]); }}
-          style={{position:"absolute",width:"100%",height:"100%",opacity:0,cursor:"pointer",zIndex:2}}/>
-        {/* Visual handles */}
-        <div style={{position:"absolute",top:"50%",left:pct(lo),width:12,height:12,background:T.orange,borderRadius:"50%",transform:"translate(-50%,-50%)",border:`2px solid ${T.orangeD}`,pointerEvents:"none"}}/>
-        <div style={{position:"absolute",top:"50%",left:pct(hi),width:12,height:12,background:T.orange,borderRadius:"50%",transform:"translate(-50%,-50%)",border:`2px solid ${T.orangeD}`,pointerEvents:"none"}}/>
+      <div style={{display:"flex",gap:4,alignItems:"center"}}>
+        <input
+          value={loStr}
+          onChange={e => setLoStr(e.target.value)}
+          onBlur={() => commit(loStr, hiStr)}
+          placeholder={`Min (${placeholder})`}
+          style={inputStyle(loErr)}
+        />
+        <span style={{color:T.dim,fontSize:10}}>–</span>
+        <input
+          value={hiStr}
+          onChange={e => setHiStr(e.target.value)}
+          onBlur={() => commit(loStr, hiStr)}
+          placeholder={`Max (${placeholder})`}
+          style={inputStyle(hiErr)}
+        />
+        {(loStr||hiStr) && (
+          <button onClick={()=>{setLoStr("");setHiStr("");setLoErr(false);setHiErr(false);onChange(null);}}
+            style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:12,padding:"0 2px",flexShrink:0}}>✕</button>
+        )}
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}>
-        <span style={{color:T.dim,fontSize:8,fontFamily:"monospace"}}>{fmtTime(globalMin)}</span>
-        <span style={{color:T.dim,fontSize:8,fontFamily:"monospace"}}>{fmtTime(globalMax)}</span>
-      </div>
+      {(loErr||hiErr) && <div style={{color:T.red,fontSize:9,marginTop:2}}>Use format: 4:05.00 or 13.45</div>}
     </div>
   );
 }
@@ -1099,14 +1148,24 @@ export default function App() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    // Paginate to handle large datasets — fetch all pages
     const fetchAll = async () => {
       const PAGE = 1000;
       let all = [], page = 0, done = false;
       try {
         while (!done) {
-          const r = await fetch(`/api/athletes?limit=${PAGE}&offset=${page * PAGE}`);
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const url = `/api/athletes?limit=${PAGE}&offset=${page * PAGE}`;
+          const r = await fetch(url);
+          if (!r.ok) {
+            // If offset not supported by old API, try without it
+            if (page === 0) {
+              const r2 = await fetch(`/api/athletes?limit=5000`);
+              if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
+              const data2 = await r2.json();
+              all = Array.isArray(data2) ? data2 : [];
+            }
+            done = true;
+            break;
+          }
           const data = await r.json();
           const batch = Array.isArray(data) ? data : [];
           all = all.concat(batch);
