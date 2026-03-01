@@ -134,6 +134,7 @@ def search_athlete(name: str, hs_grad_year: int | None) -> list[dict]:
         "https://www.athletic.net/api/v1/Search",
     ]:
         data = get_page(endpoint, params={"q": name, "type": "athlete"}, as_json=True)
+        log.info(f"  [DEBUG] {endpoint} → {str(data)[:300] if data else 'None/empty'}")
         if not data:
             continue
         results = (
@@ -171,7 +172,11 @@ def search_athlete(name: str, hs_grad_year: int | None) -> list[dict]:
     # HTML search fallback
     soup = get_page("https://www.athletic.net/Search.aspx", params={"q": name, "itype": "athlete"})
     if not soup:
+        log.info("  [DEBUG] HTML search returned nothing")
         return []
+    log.info(f"  [DEBUG] HTML search page title: {soup.title.string if soup.title else 'no title'}")
+    all_links = soup.find_all("a", href=re.compile(r"(?:AID=|/athlete/)\d+"))
+    log.info(f"  [DEBUG] Found {len(all_links)} athlete links in HTML")
 
     for link in soup.find_all("a", href=re.compile(r"(?:AID=|/athlete/)\d+")):
         href = link.get("href", "")
