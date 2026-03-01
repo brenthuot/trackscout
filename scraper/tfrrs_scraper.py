@@ -2,6 +2,7 @@
 Run Stats — TFRRS Scraper v3
 Uses correct TFRRS URL format: /teams/tf/{STATE}_college_{m/f}_{Slug}.html
 Scrapes both Men's and Women's rosters.
+Excludes athletes who compete exclusively in field events.
 """
 
 import os
@@ -39,18 +40,20 @@ HEADERS = {
 }
 RATE_LIMIT_SECONDS = 2.5
 
+# ── FIELD EVENTS (used to filter out field-only athletes) ─────────────────────
+# Any athlete whose entire event set is a subset of these will be skipped.
+FIELD_EVENTS = {"HJ", "LJ", "TJ", "PV", "SP", "DT", "HT", "JT", "WT", "Pent", "Hept", "Dec"}
+
 # ── CONFERENCE GROUPS ─────────────────────────────────────────────────────────
 # Rebalanced: each group pairs a large conference with a smaller one
 # so all 6 GitHub Actions runners take roughly equal time.
 #
-# Old Group 6 was WCC alone (8 schools) — finished in minutes.
-# New groupings by estimated athlete volume:
-#   Group 1: SEC (14) + WCC (8)          = 22 schools  ~large + small
-#   Group 2: Big Ten (14) + Big Sky (11) = 25 schools  ~large + small
-#   Group 3: ACC (15) + Ivy (8)          = 23 schools  ~large + small
-#   Group 4: Big 12 (10) + A10 (12)      = 22 schools  ~medium + medium
-#   Group 5: Pac-12 (12) + American (12) = 24 schools  ~medium + medium
-#   Group 6: Mountain West (12) + Big East (11) = 23 schools  ~medium + medium
+#   Group 1: SEC (14) + WCC (8)                  = 22 schools
+#   Group 2: Big Ten (14) + Big Sky (11)          = 25 schools
+#   Group 3: ACC (15) + Ivy (8)                   = 23 schools
+#   Group 4: Big 12 (10) + Atlantic 10 (12)       = 22 schools
+#   Group 5: Pac-12 (12) + American (12)          = 24 schools
+#   Group 6: Mountain West (12) + Big East (11)   = 23 schools
 
 CONFERENCE_GROUPS = {
     "1": ["SEC", "West Coast"],
@@ -228,8 +231,8 @@ TEAMS = {
 }
 
 # ── EVENT MAP ─────────────────────────────────────────────────────────────────
-# Added short-form hurdle aliases (60H, 110H, 400H) — these are what TFRRS
-# actually uses in their results tables, not the long "X Hurdles" form.
+# Short-form hurdle aliases (60H, 110H, 400H) are what TFRRS actually uses.
+# Long-form aliases kept as fallback.
 EVENT_MAP = {
     "60": "60m", "60m": "60m", "60 Meters": "60m",
     "60H": "60mH", "60 Hurdles": "60mH", "60m Hurdles": "60mH",
@@ -281,6 +284,8 @@ def parse_mark(s: str) -> float | None:
     if not s:
         return None
     s = s.strip().lstrip("*").strip()
+    # Strip wind readings e.g. "(1.1)" or "(-0.7)" — present on all outdoor marks
+    s = re.sub(r'\s*\([^)]+\)\s*$', '', s).strip()
     try:
         if ":" in s:
             parts = s.split(":")
@@ -417,6 +422,13 @@ def scrape_athlete(info: dict) -> dict | None:
                         })
                         events_set.add(event_norm)
 
+    # ── Skip field-event-only athletes ────────────────────────────────────────
+    # If every event the athlete has is a field event, they're not relevant.
+    # Athletes with zero performances also get skipped here.
+    if not events_set or events_set.issubset(FIELD_EVENTS):
+        log.info(f"    SKIP (field-only or no perfs): {name}")
+        return None
+
     log.info(f"    {name} ({info.get('gender','')}) Y{college_year or '?'} HS:{hs_grad_year or '?'} — {len(performances)} perfs")
 
     return {
@@ -489,7 +501,7 @@ def run_scraper(group: str = "all"):
     already_done = get_scraped_ids()
     log.info(f"Already in DB: {len(already_done)} athletes — skipping these")
 
-    saved = skipped = errors = found_teams = missing_teams = 0
+    saved = skipped = errors = field_only = found_teams = missing_teams = 0
 
     for school, (state, slug, conference) in teams_to_scrape.items():
         for gender_code, gender_label in GENDERS:
@@ -579,11 +591,11 @@ def run_scraper(group: str = "all"):
                     else:
                         errors += 1
                 else:
-                    errors += 1
+                    field_only += 1
 
     log.info("=" * 60)
     log.info(f"Teams found: {found_teams} | Teams 404'd: {missing_teams}")
-    log.info(f"Athletes: {saved} saved | {skipped} skipped | {errors} errors")
+    log.info(f"Athletes: {saved} saved | {skipped} skipped | {field_only} field-only skipped | {errors} errors")
     log.info("=" * 60)
 
 
