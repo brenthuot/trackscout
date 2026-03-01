@@ -1,14 +1,13 @@
 """
-Run Stats — Athletic.net Backfill Scraper v2
-Searches athletic.net for each TFRRS athlete (by name + hs_grad_year),
-extracts hometown, high school, and HS performances,
-then upserts back into Supabase.
+Run Stats — Athletic.net Backfill Scraper v3
+Uses Google search (site:athletic.net "Name") to find athlete profiles,
+then scrapes hometown, high school, and HS performances directly.
 
 Usage:
     python athletic_net_scraper.py               # backfill all missing hometown
     python athletic_net_scraper.py --limit 5     # test with 5 athletes
     python athletic_net_scraper.py --group 1     # conference group 1-6
-    python athletic_net_scraper.py --all         # re-process all, not just missing
+    python athletic_net_scraper.py --all         # re-process all athletes
 """
 
 import os, time, re, logging, argparse
@@ -27,9 +26,15 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-RATE_LIMIT = 2.5
+RATE_LIMIT = 2.5   # seconds between requests
 
-HEADERS = {
+GOOGLE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+ANET_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
@@ -68,61 +73,6 @@ ANET_EVENT_MAP = {
 
 RELAY_KEYWORDS = {"relay", "4x", "medley", "4 x", "sprint medley", "distance medley"}
 
-ALGOLIA_APP_ID = None
-ALGOLIA_API_KEY = None
-
-def discover_algolia_keys():
-    """Fetch athletic.net scripts and extract Algolia app ID + search key."""
-    global ALGOLIA_APP_ID, ALGOLIA_API_KEY
-    try:
-        time.sleep(RATE_LIMIT)
-        r = requests.get("https://www.athletic.net", headers=HEADERS, timeout=20)
-        log.info(f"  [Algolia] Homepage status: {r.status_code}")
-        if r.status_code != 200:
-            return
-
-        soup = BeautifulSoup(r.text, "lxml")
-
-        # Collect all script src URLs
-        script_urls = []
-        for script in soup.find_all("script", src=True):
-            src = script["src"]
-            url = src if src.startswith("http") else f"https://www.athletic.net{src}"
-            script_urls.append(url)
-
-        log.info(f"  [Algolia] Found {len(script_urls)} script tags: {script_urls[:5]}")
-
-        # Also search inline scripts
-        inline_js = " ".join(s.get_text() for s in soup.find_all("script", src=False))
-        for js in [inline_js] + [None] * len(script_urls):  # inline first
-            if js is None:
-                if not script_urls:
-                    break
-                url = script_urls.pop(0)
-                try:
-                    time.sleep(1)
-                    jr = requests.get(url, headers=HEADERS, timeout=20)
-                    js = jr.text if jr.status_code == 200 else ""
-                    log.info(f"  [Algolia] Fetched {url[:70]}: {jr.status_code}, {len(js)} chars")
-                except Exception as e:
-                    log.warning(f"  [Algolia] Failed to fetch {url}: {e}")
-                    continue
-
-            # Look for Algolia app ID (10 uppercase alphanumeric) and API key (32 hex chars)
-            aid = re.search(r'appId["\s:=]+["\']([A-Z0-9]{10})["\']', js)
-            akey = re.search(r'(?:apiKey|searchKey|SEARCH_KEY)["\s:=]+["\']([a-f0-9]{32})["\']', js, re.I)
-            if aid and akey:
-                ALGOLIA_APP_ID = aid.group(1)
-                ALGOLIA_API_KEY = akey.group(1)
-                log.info(f"  [Algolia] ✓ Found keys! appId={ALGOLIA_APP_ID}")
-                return
-
-        log.info("  [Algolia] Keys not found in any script. Will rely on HTML fallback.")
-    except Exception as e:
-        log.error(f"  [Algolia] Discovery failed: {e}")
-
-
-
 US_STATES = {
     "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
     "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
@@ -130,33 +80,8 @@ US_STATES = {
     "VA","WA","WV","WI","WY","DC"
 }
 
-
-# ── HTTP HELPERS ──────────────────────────────────────────────────────────────
-def get_page(url: str, params=None, retries=3, as_json=False):
-    for attempt in range(retries):
-        try:
-            time.sleep(RATE_LIMIT)
-            r = requests.get(url, headers=HEADERS, params=params, timeout=20)
-            log.info(f"  [HTTP] {r.status_code} {url[:80]}")
-            if r.status_code == 200:
-                if as_json:
-                    try:
-                        return r.json()
-                    except Exception:
-                        log.info(f"  [HTTP] 200 but not JSON. Body[:200]: {r.text[:200]}")
-                        return None
-                return BeautifulSoup(r.text, "lxml")
-            elif r.status_code == 429:
-                log.warning("Rate limited — sleeping 60s")
-                time.sleep(60)
-            elif r.status_code == 404:
-                return None
-            else:
-                log.warning(f"  [HTTP] {r.status_code} body[:200]: {r.text[:200]}")
-        except Exception as e:
-            log.error(f"Attempt {attempt+1}: {e}")
-            time.sleep(5)
-    return None
+# Track Google blocks so we can back off
+_google_blocked = False
 
 
 # ── MARK PARSER ───────────────────────────────────────────────────────────────
@@ -182,155 +107,90 @@ def parse_mark(s: str) -> float | None:
         return None
 
 
-# ── ATHLETIC.NET SEARCH ───────────────────────────────────────────────────────
-def search_athlete(name: str, hs_grad_year: int | None) -> list[dict]:
+# ── GOOGLE SEARCH ─────────────────────────────────────────────────────────────
+def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
     """
-    Search athletic.net for an athlete by name + grad year.
-    Tries JSON API first, falls back to HTML search page.
+    Search Google for site:athletic.net "Name" and return matching profile URLs.
+    Returns list of athletic.net athlete profile URLs.
     """
-    candidates = []
-
-    # Try Algolia if we have keys
-    if ALGOLIA_APP_ID and ALGOLIA_API_KEY:
-        algolia_url = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/athletes/query"
-        algolia_headers = {**HEADERS,
-            "X-Algolia-Application-Id": ALGOLIA_APP_ID,
-            "X-Algolia-API-Key": ALGOLIA_API_KEY,
-        }
-        try:
-            time.sleep(RATE_LIMIT)
-            r = requests.post(algolia_url, json={"query": name, "hitsPerPage": 10}, headers=algolia_headers, timeout=20)
-            log.info(f"  [Algolia] Query status: {r.status_code}, body[:200]: {r.text[:200]}")
-            if r.status_code == 200:
-                hits = r.json().get("hits", [])
-                for h in hits:
-                    aid = str(h.get("AthleteID") or h.get("objectID") or "")
-                    if not aid:
-                        continue
-                    grad = h.get("GraduationYear") or h.get("gradYear")
-                    if hs_grad_year and grad:
-                        try:
-                            if abs(int(grad) - int(hs_grad_year)) > 1:
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-                    candidates.append({
-                        "id": aid,
-                        "name": h.get("Name") or h.get("name") or "",
-                        "school": h.get("SchoolName") or "",
-                        "grad_year": grad,
-                        "url": f"https://www.athletic.net/athlete/{aid}/track-and-field/",
-                        "url_old": f"https://www.athletic.net/TrackAndField/Athlete.aspx?AID={aid}",
-                    })
-                if candidates:
-                    return candidates[:5]
-        except Exception as e:
-            log.error(f"  [Algolia] Search failed: {e}")
-
-    # Try JSON search endpoints
-    for endpoint in [
-        "https://www.athletic.net/api/v1/AthleticAPI/Search",
-        "https://www.athletic.net/api/v1/Search",
-    ]:
-        data = get_page(endpoint, params={"q": name, "type": "athlete"}, as_json=True)
-        log.info(f"  [DEBUG] {endpoint} → {str(data)[:300] if data else 'None/empty'}")
-        if not data:
-            continue
-        results = (
-            data.get("athletes") or data.get("Athletes") or
-            data.get("results") or data.get("Results") or []
-        )
-        if isinstance(results, dict):
-            results = results.get("hits") or results.get("items") or []
-        for r in results:
-            aid = str(
-                r.get("AthleteID") or r.get("athleteId") or
-                r.get("id") or r.get("ID") or ""
-            )
-            if not aid:
-                continue
-            grad = r.get("GraduationYear") or r.get("gradYear") or r.get("GradYear")
-            if hs_grad_year and grad:
-                try:
-                    if abs(int(grad) - int(hs_grad_year)) > 1:
-                        continue
-                except (ValueError, TypeError):
-                    pass
-            candidates.append({
-                "id": aid,
-                "name": r.get("Name") or r.get("name") or "",
-                "school": r.get("SchoolName") or r.get("school") or "",
-                "grad_year": grad,
-                "url": f"https://www.athletic.net/athlete/{aid}/track-and-field/",
-                "url_old": f"https://www.athletic.net/TrackAndField/Athlete.aspx?AID={aid}",
-            })
-        if candidates:
-            log.debug(f"  JSON API: {len(candidates)} candidates")
-            return candidates[:5]
-
-    # HTML search fallback
-    soup = get_page("https://www.athletic.net/Search.aspx", params={"q": name, "itype": "athlete"})
-    if not soup:
-        log.info("  [DEBUG] HTML search returned nothing")
+    global _google_blocked
+    if _google_blocked:
         return []
-    log.info(f"  [DEBUG] HTML search page title: {soup.title.string if soup.title else 'no title'}")
-    all_links = soup.find_all("a", href=re.compile(r"(?:AID=|/athlete/)\d+"))
-    log.info(f"  [DEBUG] Found {len(all_links)} athlete links in HTML")
 
-    for link in soup.find_all("a", href=re.compile(r"(?:AID=|/athlete/)\d+")):
-        href = link.get("href", "")
-        aid_match = re.search(r"(?:AID=|/athlete/)(\d+)", href)
-        if not aid_match:
-            continue
-        aid = aid_match.group(1)
-        aname = link.get_text(strip=True)
-        if not aname or len(aname) < 2:
-            continue
-        row = link.find_parent(["tr", "li", "div"])
-        row_text = row.get_text(" ", strip=True) if row else ""
-        grad_match = re.search(r"\b(20[12]\d)\b", row_text)
-        grad = int(grad_match.group(1)) if grad_match else None
-        if hs_grad_year and grad:
-            try:
-                if abs(grad - hs_grad_year) > 1:
-                    continue
-            except (ValueError, TypeError):
-                pass
-        candidates.append({
-            "id": aid,
-            "name": aname,
-            "school": "",
-            "grad_year": grad,
-            "url": f"https://www.athletic.net/athlete/{aid}/track-and-field/",
-            "url_old": f"https://www.athletic.net/TrackAndField/Athlete.aspx?AID={aid}",
-        })
+    query = f'site:athletic.net/athlete "{name}"'
+    if hs_grad_year:
+        query += f' {hs_grad_year}'
 
-    return candidates[:5]
+    url = "https://www.google.com/search"
+    params = {"q": query, "num": 5}
+
+    try:
+        time.sleep(RATE_LIMIT)
+        r = requests.get(url, headers=GOOGLE_HEADERS, params=params, timeout=20)
+        log.info(f"  [Google] Status: {r.status_code}, query: {query}")
+
+        if r.status_code == 429 or "unusual traffic" in r.text.lower() or "captcha" in r.text.lower():
+            log.warning("  [Google] Blocked — switching to fallback")
+            _google_blocked = True
+            return []
+
+        if r.status_code != 200:
+            log.warning(f"  [Google] HTTP {r.status_code}")
+            return []
+
+        soup = BeautifulSoup(r.text, "lxml")
+
+        # Extract URLs from Google result links
+        urls = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            # Google wraps URLs in /url?q=...
+            if href.startswith("/url?q="):
+                href = href[7:].split("&")[0]
+            # Match athletic.net athlete profile URLs
+            if re.search(r'athletic\.net/athlete/\d+', href):
+                urls.append(href)
+            elif re.search(r'athletic\.net/TrackAndField/Athlete\.aspx\?AID=\d+', href):
+                # Convert old format to new
+                aid = re.search(r'AID=(\d+)', href).group(1)
+                urls.append(f"https://www.athletic.net/athlete/{aid}/track-and-field/")
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique = []
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                unique.append(u)
+
+        log.info(f"  [Google] Found {len(unique)} profile URLs: {unique[:3]}")
+        return unique
+
+    except Exception as e:
+        log.error(f"  [Google] Error: {e}")
+        return []
 
 
-# ── ATHLETE PROFILE SCRAPER ───────────────────────────────────────────────────
-def scrape_profile(candidate: dict, expected_name: str, hs_grad_year: int | None) -> dict | None:
+# ── ATHLETIC.NET PROFILE SCRAPER ──────────────────────────────────────────────
+def scrape_profile(url: str, expected_name: str, hs_grad_year: int | None) -> dict | None:
     """
-    Scrape athletic.net athlete profile. Tries new URL format then old.
-    Returns profile dict or None if name doesn't match.
+    Scrape an athletic.net athlete profile page.
+    Returns {hometown, hometown_state, high_school, performances, anet_url} or None.
     """
-    soup = None
-    used_url = None
-
-    for url in [candidate["url"], candidate.get("url_old", "")]:
-        if not url:
-            continue
-        soup = get_page(url)
-        if soup:
-            used_url = url
-            break
-
-    if not soup:
+    try:
+        time.sleep(RATE_LIMIT)
+        r = requests.get(url, headers=ANET_HEADERS, timeout=20)
+        log.info(f"  [Profile] {r.status_code} {url[:70]}")
+        if r.status_code != 200:
+            return None
+    except Exception as e:
+        log.error(f"  [Profile] Error fetching {url}: {e}")
         return None
 
+    soup = BeautifulSoup(r.text, "lxml")
     page_text = soup.get_text(" ", strip=True)
 
-    # Verify name match
+    # ── Verify name match ────────────────────────────────────────────────────
     page_name = ""
     for tag in soup.find_all(["h1", "h2"]):
         t = tag.get_text(strip=True)
@@ -344,7 +204,7 @@ def scrape_profile(candidate: dict, expected_name: str, hs_grad_year: int | None
             log.debug(f"    Name mismatch: expected '{expected_name}', got '{page_name}'")
             return None
 
-    # Extract hometown
+    # ── Extract hometown ─────────────────────────────────────────────────────
     hometown = ""
     hometown_state = ""
     for text in soup.stripped_strings:
@@ -360,7 +220,7 @@ def scrape_profile(candidate: dict, expected_name: str, hs_grad_year: int | None
             hometown = m.group(0).strip()
             hometown_state = m.group(2)
 
-    # Extract high school
+    # ── Extract high school ──────────────────────────────────────────────────
     high_school = ""
     for tag in soup.find_all(["h3", "h4", "a", "span", "td", "li", "p"]):
         t = tag.get_text(strip=True)
@@ -377,96 +237,63 @@ def scrape_profile(candidate: dict, expected_name: str, hs_grad_year: int | None
         if m:
             high_school = m.group(1).strip()[:80]
 
-    # Extract HS performances — try JSON API first
+    # ── Extract HS performances from results tables ──────────────────────────
     performances = []
-    aid = candidate["id"]
-    results_data = None
-    for jurl in [
-        f"https://www.athletic.net/api/v1/AthleticAPI/AthleteResults?athleteId={aid}&sport=tf",
-        f"https://www.athletic.net/api/v1/athlete/{aid}/results?sport=tf",
-    ]:
-        results_data = get_page(jurl, as_json=True)
-        if results_data:
-            break
+    current_year = None
 
-    if results_data:
-        results = results_data.get("results") or results_data.get("Results") or []
-        for res in results:
-            event_raw = str(res.get("EventName") or res.get("event") or "")
-            if any(kw in event_raw.lower() for kw in RELAY_KEYWORDS):
+    for table in soup.find_all("table"):
+        for row in table.find_all("tr"):
+            cells = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
+            if not cells:
                 continue
-            event_norm = ANET_EVENT_MAP.get(event_raw)
-            if not event_norm:
+            # Track year from any cell
+            for cell in cells:
+                yr = re.search(r'\b(20[01][0-9]|202[0-6])\b', cell)
+                if yr:
+                    current_year = int(yr.group(1))
+            if len(cells) < 2:
                 continue
-            mark_raw = str(res.get("Result") or res.get("mark") or "")
-            mark_num = parse_mark(mark_raw)
-            if not mark_num or mark_num <= 0:
-                continue
-            year = res.get("Year") or res.get("year")
-            meet = str(res.get("MeetName") or res.get("meet") or "")
-            performances.append({
-                "event": event_norm,
-                "mark": mark_num,
-                "mark_display": mark_raw,
-                "year": int(year) if year else None,
-                "season": "outdoor",
-                "level": "hs",
-                "meet_name": meet[:100],
-            })
-    else:
-        # HTML table fallback
-        current_year = None
-        for table in soup.find_all("table"):
-            for row in table.find_all("tr"):
-                cells = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
-                if not cells:
+            for i, cell in enumerate(cells):
+                if any(kw in cell.lower() for kw in RELAY_KEYWORDS):
                     continue
-                for cell in cells:
-                    yr = re.search(r'\b(20[01][0-9]|202[0-6])\b', cell)
-                    if yr:
-                        current_year = int(yr.group(1))
-                if len(cells) < 2:
-                    continue
-                for i, cell in enumerate(cells):
-                    if any(kw in cell.lower() for kw in RELAY_KEYWORDS):
-                        continue
-                    event_norm = ANET_EVENT_MAP.get(cell.strip())
-                    if event_norm and i + 1 < len(cells):
-                        mark_num = parse_mark(cells[i + 1])
-                        if mark_num and 0 < mark_num < 100000:
-                            performances.append({
-                                "event": event_norm,
-                                "mark": mark_num,
-                                "mark_display": cells[i + 1],
-                                "year": current_year,
-                                "season": "outdoor",
-                                "level": "hs",
-                                "meet_name": "",
-                            })
+                event_norm = ANET_EVENT_MAP.get(cell.strip())
+                if event_norm and i + 1 < len(cells):
+                    mark_num = parse_mark(cells[i + 1])
+                    if mark_num and 0 < mark_num < 100000:
+                        performances.append({
+                            "event": event_norm,
+                            "mark": mark_num,
+                            "mark_display": cells[i + 1],
+                            "year": current_year,
+                            "season": "outdoor",
+                            "level": "hs",
+                            "meet_name": "",
+                        })
 
+    log.info(f"    hometown={hometown!r}, HS={high_school!r}, {len(performances)} perfs")
     return {
         "hometown": hometown,
         "hometown_state": hometown_state,
         "high_school": high_school,
         "performances": performances,
-        "anet_url": used_url,
+        "anet_url": url,
     }
 
 
-# ── BEST CANDIDATE SELECTOR ───────────────────────────────────────────────────
+# ── FIND BEST MATCH ───────────────────────────────────────────────────────────
 def find_best_match(name: str, hs_grad_year: int | None) -> dict | None:
-    candidates = search_athlete(name, hs_grad_year)
-    if not candidates:
-        log.debug(f"  No candidates for '{name}'")
+    """Google for the athlete's athletic.net URL, then scrape the profile."""
+    urls = google_find_anet_url(name, hs_grad_year)
+    if not urls:
         return None
-    for cand in candidates[:3]:
-        profile = scrape_profile(cand, name, hs_grad_year)
+    for url in urls[:3]:
+        profile = scrape_profile(url, name, hs_grad_year)
         if profile:
             return profile
     return None
 
 
-# ── SUPABASE BACKFILL ─────────────────────────────────────────────────────────
+# ── SUPABASE SAVE ─────────────────────────────────────────────────────────────
 def backfill_athlete(athlete_row: dict) -> bool:
     athlete_id = athlete_row["id"]
     name = athlete_row["name"]
@@ -479,11 +306,7 @@ def backfill_athlete(athlete_row: dict) -> bool:
         log.info(f"    ✗ No match: {name}")
         return False
 
-    log.info(
-        f"    ✓ Found: hometown={profile['hometown']!r}, "
-        f"HS={profile['high_school']!r}, "
-        f"{len(profile['performances'])} HS perfs"
-    )
+    log.info(f"    ✓ Matched: {name}")
 
     update_data = {"updated_at": datetime.utcnow().isoformat()}
     if profile["hometown"]:
@@ -495,6 +318,7 @@ def backfill_athlete(athlete_row: dict) -> bool:
 
     try:
         supabase.table("athletes").update(update_data).eq("id", athlete_id).execute()
+
         if profile["performances"]:
             hs_rows = [
                 {**p, "athlete_id": athlete_id, "source": "athletic_net"}
@@ -509,6 +333,7 @@ def backfill_athlete(athlete_row: dict) -> bool:
                     .execute()
                 for i in range(0, len(hs_rows), 50):
                     supabase.table("performances").insert(hs_rows[i:i+50]).execute()
+
         return True
     except Exception as e:
         log.error(f"    Supabase error for {name}: {e}")
@@ -518,48 +343,9 @@ def backfill_athlete(athlete_row: dict) -> bool:
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def run(group: str = "all", limit: int = 99999, process_all: bool = False):
     log.info("=" * 60)
-    log.info(f"Athletic.net Backfill v2 — Group: {group}, Limit: {limit}, All: {process_all}")
+    log.info(f"Athletic.net Backfill v3 — Group: {group}, Limit: {limit}, All: {process_all}")
     log.info("=" * 60)
 
-    # Probe JS bundles to find real search API endpoints
-    log.info("Probing JS bundles for search API endpoints...")
-    try:
-        bundles = [
-            "https://stage.athletic.net/js/MainJS_NewLo-v-9lzksOordUJsojyLIFWdXW395JwObDculY5S6SyVci4E1",
-            "https://angular.athletic.net/app/site-app/main-FOFKCLVL.js",
-        ]
-        # Also try to find lazy chunks from the Angular app index
-        idx = requests.get("https://angular.athletic.net/app/site-app/", headers=HEADERS, timeout=20)
-        if idx.status_code == 200:
-            chunks = re.findall(r'src="([^"]+\.js)"', idx.text)
-            for c in chunks:
-                url = c if c.startswith("http") else f"https://angular.athletic.net{c}"
-                bundles.append(url)
-            log.info(f"  [Probe] Angular chunks found: {chunks}")
-
-        for bundle_url in bundles:
-            time.sleep(1)
-            r = requests.get(bundle_url, headers=HEADERS, timeout=30)
-            if r.status_code != 200:
-                log.info(f"  [Probe] {bundle_url[:60]}: {r.status_code}")
-                continue
-            js = r.text
-            # Find fetch/http calls with URLs
-            api_calls = re.findall(r'(?:fetch|get|post|http\.get)\(["\`](https?://[^"\'`\s]{5,120})["\`]', js, re.I)
-            url_strings = re.findall(r'["\`](https?://[^"\'`\s]*(?:search|athlete|result|api|query)[^"\'`\s]{0,80})["\`]', js, re.I)
-            relative = re.findall(r'["\`](/[^"\'`\s]*(?:search|athlete|result|api|query)[^"\'`\s]{0,80})["\`]', js, re.I)
-            if api_calls or url_strings or relative:
-                log.info(f"  [Probe] {bundle_url[-50:]}: api_calls={api_calls[:10]}, urls={url_strings[:10]}, relative={relative[:10]}")
-            else:
-                log.info(f"  [Probe] {bundle_url[-50:]}: {len(js)} chars, no API patterns found")
-    except Exception as e:
-        log.error(f"  [Probe] Error: {e}")
-
-    # Discover Algolia credentials
-    log.info("Discovering Algolia search keys...")
-    discover_algolia_keys()
-
-    # Load athletes from Supabase
     try:
         result = supabase.table("athletes").select(
             "id, name, college, conference, hs_grad_year, college_year, hometown"
@@ -577,7 +363,7 @@ def run(group: str = "all", limit: int = 99999, process_all: bool = False):
     else:
         athletes = all_athletes
 
-    # Only process missing hometown unless --all flag
+    # Only missing hometown unless --all
     if not process_all:
         to_process = [a for a in athletes if not a.get("hometown")]
     else:
@@ -600,7 +386,7 @@ def run(group: str = "all", limit: int = 99999, process_all: bool = False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Athletic.net backfill scraper v2")
+    parser = argparse.ArgumentParser(description="Athletic.net backfill scraper v3")
     parser.add_argument("--group", default="all", help="Conference group 1-6 or 'all'")
     parser.add_argument("--limit", type=int, default=99999, help="Max athletes to process")
     parser.add_argument("--all", action="store_true", dest="process_all",
