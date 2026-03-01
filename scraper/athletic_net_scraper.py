@@ -32,6 +32,7 @@ GOOGLE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.bing.com/",
 }
 
 ANET_HEADERS = {
@@ -110,8 +111,7 @@ def parse_mark(s: str) -> float | None:
 # ── GOOGLE SEARCH ─────────────────────────────────────────────────────────────
 def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
     """
-    Search Google for site:athletic.net "Name" and return matching profile URLs.
-    Returns list of athletic.net athlete profile URLs.
+    Search Bing for site:athletic.net/athlete "Name" and return matching profile URLs.
     """
     global _google_blocked
     if _google_blocked:
@@ -121,58 +121,46 @@ def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
     if hs_grad_year:
         query += f' {hs_grad_year}'
 
-    url = "https://www.google.com/search"
-    params = {"q": query, "num": 5}
+    url = "https://www.bing.com/search"
+    params = {"q": query, "count": 5}
 
     try:
         time.sleep(RATE_LIMIT)
         r = requests.get(url, headers=GOOGLE_HEADERS, params=params, timeout=20)
-        log.info(f"  [Google] Status: {r.status_code}, query: {query}")
+        log.info(f"  [Bing] Status: {r.status_code}, query: {query}")
 
-        if r.status_code == 429 or "unusual traffic" in r.text.lower() or "captcha" in r.text.lower():
-            log.warning("  [Google] Blocked — switching to fallback")
+        if r.status_code == 429:
+            log.warning("  [Bing] Rate limited — backing off")
             _google_blocked = True
+            time.sleep(60)
             return []
 
         if r.status_code != 200:
-            log.warning(f"  [Google] HTTP {r.status_code}")
+            log.warning(f"  [Bing] HTTP {r.status_code}")
             return []
 
-        # Debug: dump all hrefs found on the page
         soup = BeautifulSoup(r.text, "lxml")
-        all_hrefs = [a.get("href","") for a in soup.find_all("a", href=True)]
+        all_hrefs = [a.get("href", "") for a in soup.find_all("a", href=True)]
         anet_hrefs = [h for h in all_hrefs if "athletic.net" in h]
-        log.info(f"  [Google] Total hrefs: {len(all_hrefs)}, athletic.net hrefs: {anet_hrefs[:10]}")
-        log.info(f"  [Google] First 500 chars of body: {r.text[:500]}")
+        log.info(f"  [Bing] Total hrefs: {len(all_hrefs)}, athletic.net hrefs: {anet_hrefs[:5]}")
 
-        # Extract URLs from Google result links
         urls = []
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            # Google wraps URLs in /url?q=...
-            if href.startswith("/url?q="):
-                href = href[7:].split("&")[0]
-            # Match athletic.net athlete profile URLs
+        for href in all_hrefs:
             if re.search(r'athletic\.net/athlete/\d+', href):
-                urls.append(href)
+                urls.append(href.split("&")[0])  # strip Bing tracking params
             elif re.search(r'athletic\.net/TrackAndField/Athlete\.aspx\?AID=\d+', href):
-                # Convert old format to new
                 aid = re.search(r'AID=(\d+)', href).group(1)
                 urls.append(f"https://www.athletic.net/athlete/{aid}/track-and-field/")
 
-        # Deduplicate while preserving order
+        # Deduplicate
         seen = set()
-        unique = []
-        for u in urls:
-            if u not in seen:
-                seen.add(u)
-                unique.append(u)
+        unique = [u for u in urls if not (u in seen or seen.add(u))]
 
-        log.info(f"  [Google] Found {len(unique)} profile URLs: {unique[:3]}")
+        log.info(f"  [Bing] Found {len(unique)} profile URLs: {unique[:3]}")
         return unique
 
     except Exception as e:
-        log.error(f"  [Google] Error: {e}")
+        log.error(f"  [Bing] Error: {e}")
         return []
 
 
