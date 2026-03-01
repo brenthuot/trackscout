@@ -959,13 +959,14 @@ function EventProgressChart({event, performances, allEventMarks=[]}) {
     seasonBestSet.add(best);
   });
 
-  // Percentile vs all athletes
+  // Percentile vs all athletes (exclude self, compare prMark against others' PRs)
   let percentile = null;
   if (allEventMarks.length > 1) {
-    const better = field
-      ? allEventMarks.filter(m => m > prMark).length
-      : allEventMarks.filter(m => m < prMark).length;
-    percentile = Math.round((better / allEventMarks.length) * 100);
+    // "faster than X%" = X% of athletes have a WORSE mark than this athlete
+    const worse = field
+      ? allEventMarks.filter(m => m < prMark).length   // field: lower = worse
+      : allEventMarks.filter(m => m > prMark).length;  // time: higher = worse
+    percentile = Math.round((worse / allEventMarks.length) * 100);
   }
 
   return (
@@ -1254,6 +1255,7 @@ function AthleteDetail({athlete, onClose, allAthletes=[]}) {
               {chartableEvents.map(ev => {
                 // Build allEventMarks from all athletes for percentile
                 const allEventMarks = allAthletes
+                  .filter(a => a.id !== athlete.id)
                   .map(a => a.collegeTimes?.[ev])
                   .filter(Boolean);
                 return <EventProgressChart key={ev} event={ev} performances={athlete.rawPerformances} allEventMarks={allEventMarks}/>;
