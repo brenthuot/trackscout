@@ -1150,27 +1150,16 @@ export default function App() {
   useEffect(() => {
     const fetchAll = async () => {
       const PAGE = 1000;
-      let all = [], page = 0, done = false;
+      let all = [], page = 0;
       try {
-        while (!done) {
-          const url = `/api/athletes?limit=${PAGE}&offset=${page * PAGE}`;
-          const r = await fetch(url);
-          if (!r.ok) {
-            // If offset not supported by old API, try without it
-            if (page === 0) {
-              const r2 = await fetch(`/api/athletes?limit=5000`);
-              if (!r2.ok) throw new Error(`HTTP ${r2.status}`);
-              const data2 = await r2.json();
-              all = Array.isArray(data2) ? data2 : [];
-            }
-            done = true;
-            break;
-          }
-          const data = await r.json();
-          const batch = Array.isArray(data) ? data : [];
+        while (true) {
+          const r = await fetch(`/api/athletes?limit=${PAGE}&offset=${page * PAGE}`);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const batch = await r.json();
+          if (!Array.isArray(batch) || batch.length === 0) break;
           all = all.concat(batch);
-          if (batch.length < PAGE) done = true;
-          else page++;
+          if (batch.length < PAGE) break;
+          page++;
         }
         setAthletes(all.map(transformAthlete));
         setLoading(false);
