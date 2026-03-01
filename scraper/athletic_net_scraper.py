@@ -521,21 +521,37 @@ def run(group: str = "all", limit: int = 99999, process_all: bool = False):
     log.info(f"Athletic.net Backfill v2 — Group: {group}, Limit: {limit}, All: {process_all}")
     log.info("=" * 60)
 
-    # Probe Angular main JS to find real API endpoints
-    log.info("Probing angular.athletic.net JS for API endpoints...")
+    # Probe JS bundles to find real search API endpoints
+    log.info("Probing JS bundles for search API endpoints...")
     try:
-        time.sleep(2)
-        r = requests.get("https://angular.athletic.net/app/site-app/main-FOFKCLVL.js", headers=HEADERS, timeout=30)
-        if r.status_code == 200:
+        bundles = [
+            "https://stage.athletic.net/js/MainJS_NewLo-v-9lzksOordUJsojyLIFWdXW395JwObDculY5S6SyVci4E1",
+            "https://angular.athletic.net/app/site-app/main-FOFKCLVL.js",
+        ]
+        # Also try to find lazy chunks from the Angular app index
+        idx = requests.get("https://angular.athletic.net/app/site-app/", headers=HEADERS, timeout=20)
+        if idx.status_code == 200:
+            chunks = re.findall(r'src="([^"]+\.js)"', idx.text)
+            for c in chunks:
+                url = c if c.startswith("http") else f"https://angular.athletic.net{c}"
+                bundles.append(url)
+            log.info(f"  [Probe] Angular chunks found: {chunks}")
+
+        for bundle_url in bundles:
+            time.sleep(1)
+            r = requests.get(bundle_url, headers=HEADERS, timeout=30)
+            if r.status_code != 200:
+                log.info(f"  [Probe] {bundle_url[:60]}: {r.status_code}")
+                continue
             js = r.text
-            api_patterns = re.findall(r'["\`]((?:/api/|https://[^"\'`\s]{5,80})[^"\'`\s]{0,100})["\`]', js)
-            unique = sorted(set(p for p in api_patterns if any(x in p.lower() for x in ['search', 'athlete', 'result'])))
-            log.info(f"  [Probe] JS size: {len(js)} chars")
-            log.info(f"  [Probe] Relevant API patterns: {unique[:30]}")
-            domains = re.findall(r'https://[\w\.\-]+athletic\.net[^\s"\'`]{0,80}', js)
-            log.info(f"  [Probe] athletic.net URLs: {sorted(set(domains))[:20]}")
-        else:
-            log.info(f"  [Probe] JS fetch failed: {r.status_code}")
+            # Find fetch/http calls with URLs
+            api_calls = re.findall(r'(?:fetch|get|post|http\.get)\(["\`](https?://[^"\'`\s]{5,120})["\`]', js, re.I)
+            url_strings = re.findall(r'["\`](https?://[^"\'`\s]*(?:search|athlete|result|api|query)[^"\'`\s]{0,80})["\`]', js, re.I)
+            relative = re.findall(r'["\`](/[^"\'`\s]*(?:search|athlete|result|api|query)[^"\'`\s]{0,80})["\`]', js, re.I)
+            if api_calls or url_strings or relative:
+                log.info(f"  [Probe] {bundle_url[-50:]}: api_calls={api_calls[:10]}, urls={url_strings[:10]}, relative={relative[:10]}")
+            else:
+                log.info(f"  [Probe] {bundle_url[-50:]}: {len(js)} chars, no API patterns found")
     except Exception as e:
         log.error(f"  [Probe] Error: {e}")
 
