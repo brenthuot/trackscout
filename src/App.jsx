@@ -240,7 +240,14 @@ function transformAthlete(raw, index) {
     "Pentathlon":"Pent","Heptathlon":"Hept","Decathlon":"Dec",
   };
   eventsRaw = eventsRaw.map(e => EVENT_ALIASES[e] || e);
-  const events = eventsRaw.filter(e => !RELAY_EVENTS.has(e));
+  const eventsFromColumn = new Set(eventsRaw.filter(e => !RELAY_EVENTS.has(e)));
+  // Also derive events from actual performances (source of truth)
+  // This catches events the scraper missed in the events column
+  const eventsFromPerfs = new Set(
+    rawPerformances.map(p => p.event).filter(e => e && !RELAY_EVENTS.has(e))
+  );
+  // Merge both sources
+  const events = [...new Set([...eventsFromColumn, ...eventsFromPerfs])];
 
   // Only use hometown if it's a real "City, ST" value
   const hometown = raw.hometown || "";
