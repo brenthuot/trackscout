@@ -509,11 +509,11 @@ def save_athlete(data: dict) -> tuple[bool, bool]:
 
 
 def get_scraped_ids() -> set:
-    """Returns set of source_ids that were scraped within the last 24 hours.
-    Athletes updated more than 24 hours ago will be re-scraped to pick up new performances."""
+    """Returns set of source_ids that were scraped within the last hour.
+    Only skips athletes to prevent duplicate work between parallel groups in the same run."""
     try:
         from datetime import timezone, timedelta
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         ids = set()
         page = 0
         PAGE = 1000
@@ -522,14 +522,14 @@ def get_scraped_ids() -> set:
                 .select("source_id") \
                 .eq("source", "tfrrs") \
                 .gt("updated_at", cutoff) \
-                .range(page * PAGE, (page + 1) * PAGE - 1) \
+                .range(page * PAGE, page * PAGE + PAGE - 1) \
                 .execute()
             batch = result.data or []
             ids.update(r["source_id"] for r in batch)
             if len(batch) < PAGE:
                 break
             page += 1
-        log.info(f"Loaded {len(ids)} recently-scraped athlete IDs (< 24h) — skipping these")
+        log.info(f"Athletes scraped in last 1h: {len(ids)} — skipping these, re-scraping the rest")
         return ids
     except Exception as e:
         log.error(f"Could not load existing IDs: {e}")
@@ -555,7 +555,7 @@ def run_scraper(group: str = "all"):
         log.info(f"Scraping ALL {len(teams_to_scrape)} schools")
 
     already_done = get_scraped_ids()
-    log.info(f"Athletes scraped in last 24h: {len(already_done)} — skipping these, re-scraping the rest")
+    log.info(f"Athletes scraped in last 1h: {len(already_done)} — skipping these, re-scraping the rest")
 
     saved = skipped = errors = field_only = found_teams = missing_teams = 0
 
