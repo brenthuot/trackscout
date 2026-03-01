@@ -494,8 +494,22 @@ def save_athlete(data: dict) -> tuple[bool, bool]:
 
 def get_scraped_ids() -> set:
     try:
-        result = supabase.table("athletes").select("source_id").eq("source", "tfrrs").execute()
-        return {r["source_id"] for r in result.data}
+        ids = set()
+        page = 0
+        PAGE = 1000
+        while True:
+            result = supabase.table("athletes") \
+                .select("source_id") \
+                .eq("source", "tfrrs") \
+                .range(page * PAGE, (page + 1) * PAGE - 1) \
+                .execute()
+            batch = result.data or []
+            ids.update(r["source_id"] for r in batch)
+            if len(batch) < PAGE:
+                break
+            page += 1
+        log.info(f"Loaded {len(ids)} existing athlete IDs from DB")
+        return ids
     except Exception as e:
         log.error(f"Could not load existing IDs: {e}")
         return set()
