@@ -8,11 +8,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install dependencies
         run: pip install requests beautifulsoup4 lxml supabase
+
+      - name: Test with known athlete (Grant Fisher)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scraper/athletic_net_scraper.py --name "Grant Fisher"
+
       - name: Run test (5 athletes)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
