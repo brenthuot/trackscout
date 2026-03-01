@@ -142,15 +142,29 @@ def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
         soup = BeautifulSoup(r.text, "lxml")
         all_hrefs = [a.get("href", "") for a in soup.find_all("a", href=True)]
         anet_hrefs = [h for h in all_hrefs if "athletic.net" in h]
-        log.info(f"  [Bing] Total hrefs: {len(all_hrefs)}, athletic.net hrefs: {anet_hrefs[:5]}")
+
+        # Also check cite tags (Bing puts result URLs there)
+        cite_urls = [c.get_text(strip=True) for c in soup.find_all("cite")]
+        anet_cites = [c for c in cite_urls if "athletic.net" in c]
+
+        log.info(f"  [Bing] Total hrefs: {len(all_hrefs)}, anet hrefs: {anet_hrefs[:5]}")
+        log.info(f"  [Bing] Cite URLs: {cite_urls[:10]}")
+        log.info(f"  [Bing] Body snippet: {r.text[500:1000]}")
 
         urls = []
+        # Check hrefs
         for href in all_hrefs:
             if re.search(r'athletic\.net/athlete/\d+', href):
-                urls.append(href.split("&")[0])  # strip Bing tracking params
+                urls.append(href.split("&")[0])
             elif re.search(r'athletic\.net/TrackAndField/Athlete\.aspx\?AID=\d+', href):
                 aid = re.search(r'AID=(\d+)', href).group(1)
                 urls.append(f"https://www.athletic.net/athlete/{aid}/track-and-field/")
+        # Check cite tags
+        for cite in anet_cites:
+            if re.search(r'athletic\.net/athlete/\d+', cite):
+                m = re.search(r'athletic\.net/athlete/(\d+)', cite)
+                if m:
+                    urls.append(f"https://www.athletic.net/athlete/{m.group(1)}/track-and-field/")
 
         # Deduplicate
         seen = set()
@@ -384,5 +398,13 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=99999, help="Max athletes to process")
     parser.add_argument("--all", action="store_true", dest="process_all",
                         help="Re-process all athletes, not just those missing hometown")
+    parser.add_argument("--name", default=None, help="Test with a specific athlete name")
     args = parser.parse_args()
-    run(group=args.group, limit=args.limit, process_all=args.process_all)
+
+    if args.name:
+        # Quick test mode
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+        result = google_find_anet_url(args.name, None)
+        print(f"Result for '{args.name}': {result}")
+    else:
+        run(group=args.group, limit=args.limit, process_all=args.process_all)
