@@ -1,6 +1,6 @@
 // api/athletes.js — Vercel serverless function
-// Fetches athletes + their performances from Supabase
-// Supports: ?limit=1000&offset=0
+// Supports: ?limit=N&offset=N  (paginated)
+// Also supports legacy: ?limit=5000 (returns up to 1000, ignores offset)
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -15,10 +15,9 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
-    const limit  = Math.min(parseInt(req.query.limit  || "1000"), 1000); // cap at 1000 per page
+    const limit  = Math.min(parseInt(req.query.limit  || "1000"), 1000);
     const offset = parseInt(req.query.offset || "0");
 
-    // Fetch athletes page
     const { data: athletes, error: athErr } = await supabase
       .from("athletes")
       .select("*")
@@ -29,7 +28,6 @@ export default async function handler(req, res) {
     if (athErr) throw athErr;
     if (!athletes || athletes.length === 0) return res.status(200).json([]);
 
-    // Fetch performances for this batch of athletes
     const ids = athletes.map(a => a.id);
     const { data: performances, error: perfErr } = await supabase
       .from("performances")
@@ -38,14 +36,12 @@ export default async function handler(req, res) {
 
     if (perfErr) throw perfErr;
 
-    // Group performances by athlete_id
     const perfMap = {};
     (performances || []).forEach(p => {
       if (!perfMap[p.athlete_id]) perfMap[p.athlete_id] = [];
       perfMap[p.athlete_id].push(p);
     });
 
-    // Attach performances to each athlete
     const result = athletes.map(a => ({
       ...a,
       performances: perfMap[a.id] || [],
