@@ -138,14 +138,11 @@ def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
             _google_blocked = True
             return []
 
-        # 202 = DDG asking us to slow down, retry once after longer delay
+        # 202 = DDG throttling. Skip this athlete — it will be caught on rerun.
         if r.status_code == 202:
-            log.warning("  [DDG] Got 202 — slowing down, retrying after 30s")
-            time.sleep(30)
-            r = requests.get(url, headers=GOOGLE_HEADERS, params=params, timeout=20)
-            log.info(f"  [DDG] Retry status: {r.status_code}")
-            if r.status_code not in (200, 202):
-                return []
+            log.warning("  [DDG] Got 202 (throttled) — skipping athlete")
+            time.sleep(15)  # brief cooldown before next athlete
+            return []
 
         if r.status_code not in (200, 202):
             log.warning(f"  [DDG] HTTP {r.status_code}")
@@ -212,18 +209,16 @@ def scrape_profile(url: str, expected_name: str, hs_grad_year: int | None) -> di
     soup = BeautifulSoup(r.text, "lxml")
     page_text = soup.get_text(" ", strip=True)
 
-    # ── Verify name match ────────────────────────────────────────────────────
-    page_name = ""
-    for tag in soup.find_all(["h1", "h2"]):
-        t = tag.get_text(strip=True)
-        if 2 < len(t) < 80:
-            page_name = t
-            break
+    # ── Verify name match via page title ────────────────────────────────────
+    # athletic.net renders athlete name in JS, but the <title> tag is static:
+    # e.g. "Jip Degreef - Track & Field - Athletic.net"
+    page_title = soup.title.string if soup.title else ""
+    log.info(f"    Page title: {page_title!r}")
 
     expected_parts = expected_name.lower().split()
     if len(expected_parts) >= 2:
-        if not all(p in page_name.lower() for p in expected_parts[:2]):
-            log.info(f"    Name mismatch: expected '{expected_name}', page h1/h2='{page_name}'")
+        if not all(p in page_title.lower() for p in expected_parts[:2]):
+            log.info(f"    Name mismatch: expected '{expected_name}', title='{page_title}'")
             return None
 
     # ── Extract hometown ─────────────────────────────────────────────────────
