@@ -196,7 +196,13 @@ function transformAthlete(raw, index) {
     if (isBetter) bucket[p.event] = p.mark;
   });
   const college = raw.college || "Unknown";
-  const events = (raw.events || []).filter(e => !RELAY_EVENTS.has(e));
+  // Supabase may return events as a PG array string "{60m,Mile}" or already as JS array
+  let eventsRaw = raw.events || [];
+  if (typeof eventsRaw === "string") {
+    eventsRaw = eventsRaw.replace(/^\{|\}$/g, "").split(",").map(s => s.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(eventsRaw)) eventsRaw = [];
+  const events = eventsRaw.filter(e => !RELAY_EVENTS.has(e));
 
   // Only use hometown if it's a real "City, ST" value
   const hometown = raw.hometown || "";
@@ -1161,7 +1167,12 @@ export default function App() {
           if (batch.length < PAGE) break;
           page++;
         }
-        setAthletes(all.map(transformAthlete));
+        const transformed = [];
+        all.forEach((raw, i) => {
+          try { transformed.push(transformAthlete(raw, i)); }
+          catch(e) { console.warn("Bad athlete row:", raw?.id, e.message); }
+        });
+        setAthletes(transformed);
         setLoading(false);
       } catch(err) {
         setError(err.message);
