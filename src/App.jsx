@@ -247,7 +247,7 @@ function drawHeatmap(canvas, athletes, projection) {
   const W = canvas.width, H = canvas.height;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, W, H);
-  const pts = athletes.map(a => projection([a.hometownCoords[1], a.hometownCoords[0]])).filter(Boolean);
+  const pts = athletes.filter(a=>a.hometownCoords).map(a => projection([a.hometownCoords[1], a.hometownCoords[0]])).filter(Boolean);
   if (!pts.length) return;
   const R = 14, bw = R / 2.8;
   const density = new Float32Array(W * H);
@@ -323,6 +323,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
 
     if (mapMode === "heatmap") return;
 
+    try {
     const stateFiltered = (hasStateFilter && mapMode==="flows")
       ? athletes.filter(a=>selectedStates.includes(getState(a.hometown)))
       : athletes;
@@ -368,6 +369,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
           .on("click",()=>onAthleteClick(a));
       });
     }
+    } catch(e) { console.error("Map render error:", e.message, e.stack); }
   }, [geo,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates]);
 
   useEffect(() => {
@@ -588,8 +590,9 @@ function applyFilters(athletes, filters, search="", performanceRanges={}) {
   return athletes.filter(a => {
     if (filters.season && filters.season !== "all") {
       const eventsInSeason = EVENTS_CFG.filter(e=>e.season==="both"||e.season===filters.season).map(e=>e.id);
-      if (!a.events.some(e=>eventsInSeason.includes(e))) return false;
+      if (!Array.isArray(a.events) || !a.events.some(e=>eventsInSeason.includes(e))) return false;
     }
+    if (filters.events?.length>0 && !Array.isArray(a.events)) return false;
     if (filters.events?.length>0 && !filters.events.some(e=>a.events.includes(e))) return false;
     if (filters.conference && a.conference!==filters.conference) return false;
     if (filters.college && a.college!==filters.college) return false;
@@ -722,7 +725,7 @@ function CollegePullPanel({athletes, focusedCollege, onFocusCollege}) {
       map[a.college].list.push({...a,dist:a.hometownCoords?haversine(a.hometownCoords,a.collegeCoords):0});
       map[a.college].hometowns.add(a.hometown);
     });
-    return Object.values(map).map(c=>({...c,count:c.list.length,avgDist:c.list.reduce((s,a)=>s+a.dist,0)/c.list.length,maxDist:Math.max(...c.list.map(a=>a.dist)),hometownCount:c.hometowns.size})).sort((a,b)=>b.count-a.count);
+    return Object.values(map).map(c=>({...c,count:c.list.length,avgDist:c.list.reduce((s,a)=>s+a.dist,0)/c.list.length,maxDist:c.list.reduce((mx,a)=>Math.max(mx,a.dist),0),hometownCount:c.hometowns.size})).sort((a,b)=>b.count-a.count);
   }, [athletes]);
   const focused = stats.find(c=>c.college===focusedCollege);
 
@@ -778,7 +781,7 @@ function HometownPanel({athletes, focusedHometown, onFocusHometown}) {
       map[a.hometown].list.push({...a,dist:a.hometownCoords?haversine(a.hometownCoords,a.collegeCoords):0});
       map[a.hometown].colleges.add(a.college);
     });
-    return Object.values(map).map(h=>({...h,count:h.list.length,avgDist:h.list.reduce((s,a)=>s+a.dist,0)/h.list.length,maxDist:Math.max(...h.list.map(a=>a.dist)),collegeCount:h.colleges.size})).sort((a,b)=>b.count-a.count);
+    return Object.values(map).map(h=>({...h,count:h.list.length,avgDist:h.list.reduce((s,a)=>s+a.dist,0)/h.list.length,maxDist:h.list.reduce((mx,a)=>Math.max(mx,a.dist),0),collegeCount:h.colleges.size})).sort((a,b)=>b.count-a.count);
   }, [athletes]);
   const focused = stats.find(h=>h.hometown===focusedHometown);
 
