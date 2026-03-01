@@ -68,7 +68,49 @@ ANET_EVENT_MAP = {
 
 RELAY_KEYWORDS = {"relay", "4x", "medley", "4 x", "sprint medley", "distance medley"}
 
-US_STATES = {
+ALGOLIA_APP_ID = None
+ALGOLIA_API_KEY = None
+
+def discover_algolia_keys():
+    """Fetch athletic.net and extract Algolia app ID + search key from JS."""
+    global ALGOLIA_APP_ID, ALGOLIA_API_KEY
+    try:
+        time.sleep(RATE_LIMIT)
+        r = requests.get("https://www.athletic.net", headers=HEADERS, timeout=20)
+        log.info(f"  [Algolia] Homepage status: {r.status_code}")
+        if r.status_code != 200:
+            return
+        # Look for Algolia credentials in the HTML/inline JS
+        text = r.text
+        app_id_match = re.search(r'["\']([A-Z0-9]{10})["\']', text)
+        api_key_match = re.search(r'algolia["\s:]+["\']([a-f0-9]{32})["\']', text, re.I)
+        if not api_key_match:
+            # Try broader pattern
+            api_key_match = re.search(r'["\']([a-f0-9]{32})["\']', text)
+
+        # Also look in script src tags for the main JS bundle
+        soup = BeautifulSoup(text, "lxml")
+        for script in soup.find_all("script", src=True):
+            src = script["src"]
+            if any(x in src for x in ["_app", "main", "chunk", "vendor"]):
+                js_url = src if src.startswith("http") else f"https://www.athletic.net{src}"
+                js_r = requests.get(js_url, headers=HEADERS, timeout=20)
+                if js_r.status_code == 200:
+                    js = js_r.text
+                    # Algolia app ID is typically 10 uppercase alphanumeric chars
+                    aid = re.search(r'appId["\s:]+["\']([A-Z0-9]{10})["\']', js)
+                    akey = re.search(r'(?:apiKey|searchKey)["\s:]+["\']([a-f0-9]{32})["\']', js, re.I)
+                    if aid and akey:
+                        ALGOLIA_APP_ID = aid.group(1)
+                        ALGOLIA_API_KEY = akey.group(1)
+                        log.info(f"  [Algolia] Found keys in {js_url[:60]}: appId={ALGOLIA_APP_ID}")
+                        return
+        log.info(f"  [Algolia] Could not find keys. Raw HTML snippet: {text[:500]}")
+    except Exception as e:
+        log.error(f"  [Algolia] Discovery failed: {e}")
+
+
+
     "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
     "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
     "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
@@ -82,15 +124,22 @@ def get_page(url: str, params=None, retries=3, as_json=False):
         try:
             time.sleep(RATE_LIMIT)
             r = requests.get(url, headers=HEADERS, params=params, timeout=20)
+            log.info(f"  [HTTP] {r.status_code} {url[:80]}")
             if r.status_code == 200:
-                return r.json() if as_json else BeautifulSoup(r.text, "lxml")
+                if as_json:
+                    try:
+                        return r.json()
+                    except Exception:
+                        log.info(f"  [HTTP] 200 but not JSON. Body[:200]: {r.text[:200]}")
+                        return None
+                return BeautifulSoup(r.text, "lxml")
             elif r.status_code == 429:
                 log.warning("Rate limited — sleeping 60s")
                 time.sleep(60)
             elif r.status_code == 404:
                 return None
             else:
-                log.warning(f"HTTP {r.status_code}: {url}")
+                log.warning(f"  [HTTP] {r.status_code} body[:200]: {r.text[:200]}")
         except Exception as e:
             log.error(f"Attempt {attempt+1}: {e}")
             time.sleep(5)
@@ -127,6 +176,43 @@ def search_athlete(name: str, hs_grad_year: int | None) -> list[dict]:
     Tries JSON API first, falls back to HTML search page.
     """
     candidates = []
+
+    # Try Algolia if we have keys
+    if ALGOLIA_APP_ID and ALGOLIA_API_KEY:
+        algolia_url = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/athletes/query"
+        algolia_headers = {**HEADERS,
+            "X-Algolia-Application-Id": ALGOLIA_APP_ID,
+            "X-Algolia-API-Key": ALGOLIA_API_KEY,
+        }
+        try:
+            time.sleep(RATE_LIMIT)
+            r = requests.post(algolia_url, json={"query": name, "hitsPerPage": 10}, headers=algolia_headers, timeout=20)
+            log.info(f"  [Algolia] Query status: {r.status_code}, body[:200]: {r.text[:200]}")
+            if r.status_code == 200:
+                hits = r.json().get("hits", [])
+                for h in hits:
+                    aid = str(h.get("AthleteID") or h.get("objectID") or "")
+                    if not aid:
+                        continue
+                    grad = h.get("GraduationYear") or h.get("gradYear")
+                    if hs_grad_year and grad:
+                        try:
+                            if abs(int(grad) - int(hs_grad_year)) > 1:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+                    candidates.append({
+                        "id": aid,
+                        "name": h.get("Name") or h.get("name") or "",
+                        "school": h.get("SchoolName") or "",
+                        "grad_year": grad,
+                        "url": f"https://www.athletic.net/athlete/{aid}/track-and-field/",
+                        "url_old": f"https://www.athletic.net/TrackAndField/Athlete.aspx?AID={aid}",
+                    })
+                if candidates:
+                    return candidates[:5]
+        except Exception as e:
+            log.error(f"  [Algolia] Search failed: {e}")
 
     # Try JSON search endpoints
     for endpoint in [
@@ -421,6 +507,10 @@ def run(group: str = "all", limit: int = 99999, process_all: bool = False):
     log.info("=" * 60)
     log.info(f"Athletic.net Backfill v2 — Group: {group}, Limit: {limit}, All: {process_all}")
     log.info("=" * 60)
+
+    # Discover Algolia credentials
+    log.info("Discovering Algolia search keys...")
+    discover_algolia_keys()
 
     # Load athletes from Supabase
     try:
