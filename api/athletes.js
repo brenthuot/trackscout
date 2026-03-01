@@ -1,34 +1,59 @@
-import { createClient } from '@supabase/supabase-js';
+// api/athletes.js — Vercel serverless function
+// Fetches athletes + their performances from Supabase
+// Supports: ?limit=1000&offset=0
+
+import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_KEY
 );
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { event, state, college, conference, hs_year, college_year, gender, limit = 500 } = req.query;
+  try {
+    const limit  = Math.min(parseInt(req.query.limit  || "1000"), 1000); // cap at 1000 per page
+    const offset = parseInt(req.query.offset || "0");
 
-  let query = supabase
-    .from('athletes')
-    .select(`
-      id, name, source, college, conference, hometown, hometown_state,
-      hs_grad_year, college_year, gender, events, tfrrs_url,
-      performances (event, mark, mark_display, year, season, level, meet_name)
-    `)
-    .limit(parseInt(limit));
+    // Fetch athletes page
+    const { data: athletes, error: athErr } = await supabase
+      .from("athletes")
+      .select("*")
+      .eq("source", "tfrrs")
+      .range(offset, offset + limit - 1)
+      .order("id");
 
-  if (event)       query = query.contains('events', [event]);
-  if (state)       query = query.eq('hometown_state', state);
-  if (college)     query = query.eq('college', college);
-  if (conference)  query = query.eq('conference', conference);
-  if (hs_year)     query = query.eq('hs_grad_year', parseInt(hs_year));
-  if (college_year) query = query.eq('college_year', parseInt(college_year));
-  if (gender)      query = query.eq('gender', gender);
+    if (athErr) throw athErr;
+    if (!athletes || athletes.length === 0) return res.status(200).json([]);
 
-  const { data, error } = await query;
+    // Fetch performances for this batch of athletes
+    const ids = athletes.map(a => a.id);
+    const { data: performances, error: perfErr } = await supabase
+      .from("performances")
+      .select("athlete_id, event, mark, mark_display, year, season, level, meet_name")
+      .in("athlete_id", ids);
 
-  if (error) return res.status(500).json({ error: error.message });
-  res.status(200).json(data || []);
+    if (perfErr) throw perfErr;
+
+    // Group performances by athlete_id
+    const perfMap = {};
+    (performances || []).forEach(p => {
+      if (!perfMap[p.athlete_id]) perfMap[p.athlete_id] = [];
+      perfMap[p.athlete_id].push(p);
+    });
+
+    // Attach performances to each athlete
+    const result = athletes.map(a => ({
+      ...a,
+      performances: perfMap[a.id] || [],
+    }));
+
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error("API error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
