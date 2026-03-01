@@ -904,14 +904,16 @@ function EventProgressChart({event, performances}) {
 
 // ── DUAL RANGE SLIDER ─────────────────────────────────────────────────────────
 function DualRangeSlider({event, allAthletes, value, onChange}) {
-  const field = isFieldEvent(event);
-  const marks = allAthletes.map(a => field ? a.collegeTimes[event] : a.collegeTimes[event]).filter(Boolean);
+  const marks = allAthletes.map(a => a.collegeTimes[event]).filter(Boolean);
   if (marks.length < 2) return null;
 
-  const globalMin = Math.min(...marks), globalMax = Math.max(...marks);
-  const [lo, hi] = value || [globalMin, globalMax];
+  // Use reduce instead of Math.min/max(...marks) — spread crashes on large arrays
+  const globalMin = marks.reduce((a,b) => Math.min(a,b), marks[0]);
+  const globalMax = marks.reduce((a,b) => Math.max(a,b), marks[0]);
+  if (globalMin === globalMax) return null;
 
-  const pct = v => ((v - globalMin)/(globalMax - globalMin)*100).toFixed(1) + "%";
+  const [lo, hi] = value || [globalMin, globalMax];
+  const pct = v => ((v - globalMin) / (globalMax - globalMin) * 100).toFixed(1) + "%";
 
   return (
     <div style={{padding:"6px 0 10px"}}>
