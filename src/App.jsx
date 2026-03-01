@@ -879,7 +879,6 @@ function EventProgressChart({event, performances}) {
   const [expanded, setExpanded] = useState(false);
   const field = isFieldEvent(event);
 
-  // All perfs for this event with valid data
   const perfs = performances
     .filter(p => p.event === event && p.mark && p.year)
     .sort((a,b) => a.year - b.year || (field ? b.mark - a.mark : a.mark - b.mark));
@@ -892,32 +891,29 @@ function EventProgressChart({event, performances}) {
   const markRange = maxMark - minMark || 1;
   const prMark = field ? Math.max(...marks) : Math.min(...marks);
 
-  // Year bests (the summary line)
   const yearBests = years.map(yr => {
-    const yPerfs = perfs.filter(p=>p.year===yr);
-    const best = field
-      ? yPerfs.reduce((b,p)=>p.mark>b.mark?p:b)
-      : yPerfs.reduce((b,p)=>p.mark<b.mark?p:b);
-    return {yr, mark: best.mark, display: best.mark_display || fmtTime(best.mark)};
+    const yp = perfs.filter(p=>p.year===yr);
+    const best = field ? yp.reduce((b,p)=>p.mark>b.mark?p:b) : yp.reduce((b,p)=>p.mark<b.mark?p:b);
+    return {yr, mark:best.mark, display:best.mark_display||fmtTime(best.mark)};
   });
 
-  // Chart uses a fixed viewBox — SVG scales to 100% width automatically
-  const VW = 260, VH = expanded ? 160 : 120;
-  const PAD = {top:16, right:14, bottom:26, left:42};
+  // ── COLLAPSED: one dot per year best ──────────────────────────────────────
+  const CVW=260, CVH=120, CP={top:18,right:14,bottom:26,left:44};
+  const cx = yr => CP.left + (years.indexOf(yr)/Math.max(years.length-1,1))*(CVW-CP.left-CP.right);
+  const cy = m => { const n=field?(m-minMark)/markRange:1-(m-minMark)/markRange; return CP.top+n*(CVH-CP.top-CP.bottom); };
+  const cLine = yearBests.map(b=>`${cx(b.yr)},${cy(b.mark)}`).join(" ");
 
-  const xScale = yr => PAD.left + (years.indexOf(yr) / Math.max(years.length-1, 1)) * (VW - PAD.left - PAD.right);
-  const yScale = m => {
-    const norm = field
-      ? (m - minMark) / markRange
-      : 1 - (m - minMark) / markRange;
-    return PAD.top + norm * (VH - PAD.top - PAD.bottom);
-  };
+  // ── EXPANDED: every performance, evenly spaced, year labels at boundaries ─
+  const EVW=260, EVH=220, EP={top:18,right:14,bottom:40,left:44};
+  const ex = i => EP.left + (i/Math.max(perfs.length-1,1))*(EVW-EP.left-EP.right);
+  const ey = m => { const n=field?(m-minMark)/markRange:1-(m-minMark)/markRange; return EP.top+n*(EVH-EP.top-EP.bottom); };
+  const eLine = perfs.map((_,i)=>`${ex(i)},${ey(perfs[i].mark)}`).join(" ");
 
-  const linePoints = yearBests.map(b=>`${xScale(b.yr)},${yScale(b.mark)}`).join(" ");
+  // Year boundary lines & labels: first perf index of each year
+  const yearBounds = years.map(yr => ({yr, i: perfs.findIndex(p=>p.year===yr)}));
 
   return (
     <div style={{marginBottom:14,borderBottom:`1px solid ${T.border}`,paddingBottom:10}}>
-      {/* Header row */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
         <span style={{color:T.orange,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:700}}>{event}</span>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -926,88 +922,72 @@ function EventProgressChart({event, performances}) {
           </span>
           <button onClick={()=>setExpanded(e=>!e)} style={{
             background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,
-            color:T.grayM,fontSize:8,cursor:"pointer",padding:"1px 5px",
-            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:0.5,
-            transition:"all 0.12s"
-          }}>{expanded ? "▲ collapse" : "▼ expand"}</button>
+            color:T.grayM,fontSize:9,cursor:"pointer",padding:"2px 7px",
+            fontFamily:"'Barlow Condensed',sans-serif",
+          }}>{expanded?"▲":"▼"}</button>
         </div>
       </div>
 
-      {/* Responsive SVG — viewBox handles all scaling */}
-      <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" style={{display:"block",overflow:"visible"}}>
-        {/* Y-axis gridlines + labels */}
-        {[0, 0.5, 1].map(t => {
-          const y = PAD.top + t * (VH - PAD.top - PAD.bottom);
-          const val = field ? maxMark - t * markRange : minMark + t * markRange;
-          return (
-            <g key={t}>
-              <line x1={PAD.left} x2={VW-PAD.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
-              <text x={PAD.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
-            </g>
-          );
-        })}
+      {/* COLLAPSED */}
+      {!expanded && (
+        <svg viewBox={`0 0 ${CVW} ${CVH}`} width="100%" style={{display:"block"}}>
+          {[0,0.5,1].map(t=>{
+            const y=CP.top+t*(CVH-CP.top-CP.bottom);
+            const val=field?maxMark-t*markRange:minMark+t*markRange;
+            return <g key={t}>
+              <line x1={CP.left} x2={CVW-CP.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
+              <text x={CP.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
+            </g>;
+          })}
+          {years.map(yr=><text key={yr} x={cx(yr)} y={CVH-6} textAnchor="middle" fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif">{yr}</text>)}
+          <polyline points={cLine} fill="none" stroke={T.orange} strokeWidth={1.8} strokeOpacity={0.6}/>
+          {yearBests.map((b,i)=>{
+            const isPR=b.mark===prMark;
+            return <g key={i}>
+              <circle cx={cx(b.yr)} cy={cy(b.mark)} r={isPR?4.5:3} fill={isPR?T.orange:T.bgCard} stroke={isPR?T.orangeD:T.borderH} strokeWidth={isPR?1.5:1}><title>{b.display} ({b.yr})</title></circle>
+              <text x={cx(b.yr)} y={cy(b.mark)-8} textAnchor="middle" fontSize={8} fill={T.orange} fontFamily="monospace" fontWeight="700">{b.display}</text>
+            </g>;
+          })}
+        </svg>
+      )}
 
-        {/* X-axis year labels */}
-        {years.map(yr => (
-          <text key={yr} x={xScale(yr)} y={VH-6} textAnchor="middle" fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif">{yr}</text>
-        ))}
-
-        {/* All-perfs scatter (expanded mode) — shown as small gray dots */}
-        {expanded && perfs.map((p,i) => {
-          const isPR = p.mark === prMark;
-          return (
-            <circle key={`all-${i}`} cx={xScale(p.year)} cy={yScale(p.mark)}
-              r={isPR ? 4.5 : 2.5}
-              fill={isPR ? T.orange : "rgba(0,0,0,0.08)"}
-              stroke={isPR ? T.orangeD : T.borderH}
-              strokeWidth={isPR ? 1.5 : 0.8}>
-              <title>{p.mark_display || fmtTime(p.mark)}{p.meet_name ? ` — ${p.meet_name}` : ""} ({p.year})</title>
-            </circle>
-          );
-        })}
-
-        {/* Best-per-year line */}
-        {yearBests.length > 1 && (
-          <polyline points={linePoints} fill="none" stroke={T.orange} strokeWidth={1.8} strokeOpacity={0.75}/>
-        )}
-
-        {/* Year-best dots (always visible) */}
-        {!expanded && yearBests.map((b,i) => {
-          const isPR = b.mark === prMark;
-          return (
-            <circle key={`best-${i}`} cx={xScale(b.yr)} cy={yScale(b.mark)}
-              r={isPR ? 4.5 : 3}
-              fill={isPR ? T.orange : T.bgCard}
-              stroke={isPR ? T.orangeD : T.borderH}
-              strokeWidth={isPR ? 1.5 : 1}>
-              <title>{b.display} ({b.yr})</title>
-            </circle>
-          );
-        })}
-
-        {/* Year-best value labels */}
-        {yearBests.map(b => (
-          <text key={`lbl-${b.yr}`} x={xScale(b.yr)} y={yScale(b.mark)-8}
-            textAnchor="middle" fontSize={8} fill={T.orange}
-            fontFamily="monospace" fontWeight="700">{b.display}</text>
-        ))}
-      </svg>
-
-      {/* Expanded: scrollable list of all individual performances */}
+      {/* EXPANDED: all perfs, x = chronological order, year dividers on x-axis */}
       {expanded && (
-        <div style={{marginTop:8,maxHeight:160,overflowY:"auto"}}>
-          {[...perfs].reverse().map((p,i) => (
-            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",borderBottom:`1px solid ${T.border}44`,fontSize:10}}>
-              <span style={{fontFamily:"monospace",color:p.mark===prMark?T.orange:T.offWhite,fontWeight:p.mark===prMark?700:400}}>
-                {p.mark_display || fmtTime(p.mark)}
-                {p.mark===prMark && <span style={{fontSize:8,marginLeft:4,color:T.orange}}>PR</span>}
-              </span>
-              <span style={{color:T.grayM,fontSize:9,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"right"}}>
-                {p.meet_name || "—"} <span style={{color:T.grayL}}>{p.year}</span>
-              </span>
-            </div>
-          ))}
-        </div>
+        <svg viewBox={`0 0 ${EVW} ${EVH}`} width="100%" style={{display:"block"}}>
+          {/* Y gridlines + labels */}
+          {[0,0.5,1].map(t=>{
+            const y=EP.top+t*(EVH-EP.top-EP.bottom);
+            const val=field?maxMark-t*markRange:minMark+t*markRange;
+            return <g key={t}>
+              <line x1={EP.left} x2={EVW-EP.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
+              <text x={EP.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
+            </g>;
+          })}
+          {/* Year boundary vertical lines + year labels below x-axis */}
+          {yearBounds.map(({yr,i},idx)=>{
+            const x=ex(i);
+            const isLast=idx===yearBounds.length-1;
+            return <g key={yr}>
+              {i>0 && <line x1={x} x2={x} y1={EP.top} y2={EVH-EP.bottom+4} stroke={T.border} strokeWidth={0.8} strokeDasharray="3,2"/>}
+              <text x={isLast ? Math.min(x, EVW-EP.right-4) : x} y={EVH-EP.bottom+14} textAnchor={isLast?"end":"start"} fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif" fontWeight="600">{yr}</text>
+            </g>;
+          })}
+          {/* Connect-the-dots line */}
+          <polyline points={eLine} fill="none" stroke={T.orange} strokeWidth={1.5} strokeOpacity={0.5}/>
+          {/* Individual performance dots */}
+          {perfs.map((p,i)=>{
+            const isPR=p.mark===prMark;
+            return <g key={i}>
+              <circle cx={ex(i)} cy={ey(p.mark)} r={isPR?5:3}
+                fill={isPR?T.orange:"rgba(0,0,0,0.07)"}
+                stroke={isPR?T.orangeD:T.borderH}
+                strokeWidth={isPR?1.5:0.8}>
+                <title>{p.mark_display||fmtTime(p.mark)}{p.meet_name?` — ${p.meet_name}`:""} ({p.year})</title>
+              </circle>
+              {isPR && <text x={ex(i)} y={ey(p.mark)-9} textAnchor="middle" fontSize={8} fill={T.orange} fontFamily="monospace" fontWeight="700">{p.mark_display||fmtTime(p.mark)}</text>}
+            </g>;
+          })}
+        </svg>
       )}
     </div>
   );
@@ -1308,6 +1288,8 @@ export default function App() {
   const [filters, setFilters] = useState({...BLANK_FILTERS});
   const [search, setSearch] = useState("");
   const [performanceRanges, setPerformanceRanges] = useState({});
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
   const handleRangeChange = (ev, range) => setPerformanceRanges(prev => ({...prev, [ev]: range}));
   // Wrapper that also cleans up ranges for deselected events
   const setFiltersWithCleanup = updater => {
@@ -1375,50 +1357,60 @@ export default function App() {
         <div style={{flex:1,display:"flex",overflow:"hidden"}}>
 
           {/* LEFT FILTER PANEL */}
-          <div style={{width:208,background:T.bgPanel,borderRight:`1px solid ${T.border}`,padding:"12px 11px",overflowY:"auto",flexShrink:0}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:11,letterSpacing:2,color:T.orange,textTransform:"uppercase"}}>Filters</span>
-              {hasFilters && <button onClick={()=>{setFilters({...BLANK_FILTERS});setSearch("");setSelectedStates([]);}} style={{background:"none",border:"none",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CLEAR</button>}
+          <div style={{width:leftCollapsed?36:210,background:T.bgPanel,borderRight:`1px solid ${T.border}`,display:"flex",flexDirection:"column",flexShrink:0,transition:"width 0.2s",overflow:"hidden"}}>
+            {/* Collapse toggle */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:leftCollapsed?"center":"space-between",padding:leftCollapsed?"8px 0":"8px 11px",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+              {!leftCollapsed && <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:11,letterSpacing:2,color:T.orange,textTransform:"uppercase"}}>Filters</span>}
+              <button onClick={()=>setLeftCollapsed(v=>!v)} title={leftCollapsed?"Expand filters":"Collapse filters"} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:4,color:T.grayM,fontSize:11,cursor:"pointer",padding:"2px 6px",lineHeight:1}}>
+                {leftCollapsed?"›":"‹"}
+              </button>
             </div>
+            {!leftCollapsed && (
+              <div style={{flex:1,overflowY:"auto",padding:"10px 11px"}}>
+                <div style={{display:"flex",justifyContent:"flex-end",marginBottom:6}}>
+                  {hasFilters && <button onClick={()=>{setFilters({...BLANK_FILTERS});setSearch("");setSelectedStates([]);}} style={{background:"none",border:"none",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CLEAR</button>}
+                </div>
 
-            <FilterControls
-              filters={filters}
-              setFilters={setFiltersWithCleanup}
-              showSeason={true}
-              selectedStates={selectedStates}
-              onStatesChange={setSelectedStates}
-              mapMode={mapMode}
-              allConferences={allConferences}
-              getConfColleges={getConfColleges}
-              allAthletes={athletes}
-              performanceRanges={performanceRanges}
-              onRangeChange={handleRangeChange}
-            />
+                <FilterControls
+                  filters={filters}
+                  setFilters={setFiltersWithCleanup}
+                  showSeason={true}
+                  selectedStates={selectedStates}
+                  onStatesChange={setSelectedStates}
+                  mapMode={mapMode}
+                  allConferences={allConferences}
+                  getConfColleges={getConfColleges}
+                  allAthletes={athletes}
+                  performanceRanges={performanceRanges}
+                  onRangeChange={handleRangeChange}
+                />
 
-            <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:4}}>
-              <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>
-                Athletes ({filtered.length})
+                <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:4}}>
+                  <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>
+                    Athletes ({filtered.length})
+                  </div>
+                  {loading && <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>Loading...</div>}
+                  {error && <div style={{color:T.red,fontSize:11,textAlign:"center",padding:"12px 0"}}>Error: {error}</div>}
+                  {!loading && !error && filtered.length===0 && (
+                    <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>No athletes match filters</div>
+                  )}
+                  {filtered.slice(0,80).map(a=>{
+                    const d=a.hometownCoords?Math.round(haversine(a.hometownCoords,a.collegeCoords)):null;
+                    const isSel=selectedAthlete?.id===a.id;
+                    return (
+                      <button key={a.id} onClick={()=>handleAthleteClick(a)} style={{display:"block",width:"100%",textAlign:"left",background:isSel?T.orangeGlow:"rgba(255,255,255,0.02)",border:`1px solid ${isSel?T.orange:T.border}`,borderRadius:5,padding:"5px 7px",marginBottom:2,cursor:"pointer",transition:"all 0.12s"}}>
+                        <div style={{color:isSel?T.orange:T.offWhite,fontSize:12,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif"}}>{a.name}</div>
+                        <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}>
+                          <span style={{color:T.dim,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:110}}>{a.college}</span>
+                          <span style={{color:distColor(d),fontSize:10,fontFamily:"monospace"}}>{fmtDist(d)}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                  {filtered.length>80 && <div style={{color:T.dim,fontSize:10,textAlign:"center",marginTop:6}}>+{filtered.length-80} more — use filters</div>}
+                </div>
               </div>
-              {loading && <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>Loading...</div>}
-              {error && <div style={{color:T.red,fontSize:11,textAlign:"center",padding:"12px 0"}}>Error: {error}</div>}
-              {!loading && !error && filtered.length===0 && (
-                <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>No athletes match filters</div>
-              )}
-              {filtered.slice(0,80).map(a=>{
-                const d=a.hometownCoords?Math.round(haversine(a.hometownCoords,a.collegeCoords)):null;
-                const isSel=selectedAthlete?.id===a.id;
-                return (
-                  <button key={a.id} onClick={()=>handleAthleteClick(a)} style={{display:"block",width:"100%",textAlign:"left",background:isSel?T.orangeGlow:"rgba(255,255,255,0.02)",border:`1px solid ${isSel?T.orange:T.border}`,borderRadius:5,padding:"5px 7px",marginBottom:2,cursor:"pointer",transition:"all 0.12s"}}>
-                    <div style={{color:isSel?T.orange:T.offWhite,fontSize:12,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif"}}>{a.name}</div>
-                    <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}>
-                      <span style={{color:T.dim,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:110}}>{a.college}</span>
-                      <span style={{color:distColor(d),fontSize:10,fontFamily:"monospace"}}>{fmtDist(d)}</span>
-                    </div>
-                  </button>
-                );
-              })}
-              {filtered.length>80 && <div style={{color:T.dim,fontSize:10,textAlign:"center",marginTop:6}}>+{filtered.length-80} more — use filters</div>}
-            </div>
+            )}
           </div>
 
           {/* MAP */}
@@ -1469,18 +1461,24 @@ export default function App() {
           </div>
 
           {/* RIGHT PANEL */}
-          <div style={{width:275,background:T.bgPanel,borderLeft:`1px solid ${T.border}`,display:"flex",flexDirection:"column",flexShrink:0}}>
-            <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
-              {[["athlete","Athlete"],["college","Pull"],["hometown","Origin"],["heatmap","Heat"]].map(([tab,label])=>(
-                <button key={tab} onClick={()=>switchRightTab(tab)} style={{flex:1,padding:"8px 3px",background:rightTab===tab?T.orangeGlow:"transparent",border:"none",borderBottom:rightTab===tab?`2px solid ${T.orange}`:"2px solid transparent",color:rightTab===tab?T.orange:T.muted,fontSize:10,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.12s"}}>{label}</button>
+          <div style={{width:rightCollapsed?36:360,background:T.bgPanel,borderLeft:`1px solid ${T.border}`,display:"flex",flexDirection:"column",flexShrink:0,transition:"width 0.2s",overflow:"hidden"}}>
+            {/* Collapse toggle + tabs */}
+            <div style={{display:"flex",alignItems:"center",borderBottom:`1px solid ${T.border}`,flexShrink:0}}>
+              <button onClick={()=>setRightCollapsed(v=>!v)} title={rightCollapsed?"Expand panel":"Collapse panel"} style={{background:"none",border:"none",borderRight:`1px solid ${T.border}`,color:T.grayM,fontSize:11,cursor:"pointer",padding:"10px 10px",lineHeight:1,flexShrink:0}}>
+                {rightCollapsed?"‹":"›"}
+              </button>
+              {!rightCollapsed && [["athlete","Athlete"],["college","Pull"],["hometown","Origin"],["heatmap","Heat"]].map(([tab,label])=>(
+                <button key={tab} onClick={()=>switchRightTab(tab)} style={{flex:1,padding:"10px 3px",background:rightTab===tab?T.orangeGlow:"transparent",border:"none",borderBottom:rightTab===tab?`2px solid ${T.orange}`:"2px solid transparent",color:rightTab===tab?T.orange:T.muted,fontSize:11,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.12s",fontWeight:rightTab===tab?700:400}}>{label}</button>
               ))}
             </div>
-            <div style={{flex:1,overflowY:"auto"}}>
-              {rightTab==="athlete"  && <AthleteDetail athlete={selectedAthlete} onClose={()=>setSelectedAthlete(null)}/>}
-              {rightTab==="college"  && <CollegePullPanel athletes={filtered} focusedCollege={focusedCollege} onFocusCollege={handleFocusCollege}/>}
-              {rightTab==="hometown" && <HometownPanel athletes={filtered} focusedHometown={focusedHometown} onFocusHometown={handleFocusHometown}/>}
-              {rightTab==="heatmap"  && <HeatmapPanel athletes={filtered}/>}
-            </div>
+            {!rightCollapsed && (
+              <div style={{flex:1,overflowY:"auto"}}>
+                {rightTab==="athlete"  && <AthleteDetail athlete={selectedAthlete} onClose={()=>setSelectedAthlete(null)}/>}
+                {rightTab==="college"  && <CollegePullPanel athletes={filtered} focusedCollege={focusedCollege} onFocusCollege={handleFocusCollege}/>}
+                {rightTab==="hometown" && <HometownPanel athletes={filtered} focusedHometown={focusedHometown} onFocusHometown={handleFocusHometown}/>}
+                {rightTab==="heatmap"  && <HeatmapPanel athletes={filtered}/>}
+              </div>
+            )}
           </div>
 
         </div>
