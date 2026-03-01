@@ -72,7 +72,7 @@ ALGOLIA_APP_ID = None
 ALGOLIA_API_KEY = None
 
 def discover_algolia_keys():
-    """Fetch athletic.net and extract Algolia app ID + search key from JS."""
+    """Fetch athletic.net scripts and extract Algolia app ID + search key."""
     global ALGOLIA_APP_ID, ALGOLIA_API_KEY
     try:
         time.sleep(RATE_LIMIT)
@@ -80,32 +80,44 @@ def discover_algolia_keys():
         log.info(f"  [Algolia] Homepage status: {r.status_code}")
         if r.status_code != 200:
             return
-        # Look for Algolia credentials in the HTML/inline JS
-        text = r.text
-        app_id_match = re.search(r'["\']([A-Z0-9]{10})["\']', text)
-        api_key_match = re.search(r'algolia["\s:]+["\']([a-f0-9]{32})["\']', text, re.I)
-        if not api_key_match:
-            # Try broader pattern
-            api_key_match = re.search(r'["\']([a-f0-9]{32})["\']', text)
 
-        # Also look in script src tags for the main JS bundle
-        soup = BeautifulSoup(text, "lxml")
+        soup = BeautifulSoup(r.text, "lxml")
+
+        # Collect all script src URLs
+        script_urls = []
         for script in soup.find_all("script", src=True):
             src = script["src"]
-            if any(x in src for x in ["_app", "main", "chunk", "vendor"]):
-                js_url = src if src.startswith("http") else f"https://www.athletic.net{src}"
-                js_r = requests.get(js_url, headers=HEADERS, timeout=20)
-                if js_r.status_code == 200:
-                    js = js_r.text
-                    # Algolia app ID is typically 10 uppercase alphanumeric chars
-                    aid = re.search(r'appId["\s:]+["\']([A-Z0-9]{10})["\']', js)
-                    akey = re.search(r'(?:apiKey|searchKey)["\s:]+["\']([a-f0-9]{32})["\']', js, re.I)
-                    if aid and akey:
-                        ALGOLIA_APP_ID = aid.group(1)
-                        ALGOLIA_API_KEY = akey.group(1)
-                        log.info(f"  [Algolia] Found keys in {js_url[:60]}: appId={ALGOLIA_APP_ID}")
-                        return
-        log.info(f"  [Algolia] Could not find keys. Raw HTML snippet: {text[:500]}")
+            url = src if src.startswith("http") else f"https://www.athletic.net{src}"
+            script_urls.append(url)
+
+        log.info(f"  [Algolia] Found {len(script_urls)} script tags: {script_urls[:5]}")
+
+        # Also search inline scripts
+        inline_js = " ".join(s.get_text() for s in soup.find_all("script", src=False))
+        for js in [inline_js] + [None] * len(script_urls):  # inline first
+            if js is None:
+                if not script_urls:
+                    break
+                url = script_urls.pop(0)
+                try:
+                    time.sleep(1)
+                    jr = requests.get(url, headers=HEADERS, timeout=20)
+                    js = jr.text if jr.status_code == 200 else ""
+                    log.info(f"  [Algolia] Fetched {url[:70]}: {jr.status_code}, {len(js)} chars")
+                except Exception as e:
+                    log.warning(f"  [Algolia] Failed to fetch {url}: {e}")
+                    continue
+
+            # Look for Algolia app ID (10 uppercase alphanumeric) and API key (32 hex chars)
+            aid = re.search(r'appId["\s:=]+["\']([A-Z0-9]{10})["\']', js)
+            akey = re.search(r'(?:apiKey|searchKey|SEARCH_KEY)["\s:=]+["\']([a-f0-9]{32})["\']', js, re.I)
+            if aid and akey:
+                ALGOLIA_APP_ID = aid.group(1)
+                ALGOLIA_API_KEY = akey.group(1)
+                log.info(f"  [Algolia] ✓ Found keys! appId={ALGOLIA_APP_ID}")
+                return
+
+        log.info("  [Algolia] Keys not found in any script. Will rely on HTML fallback.")
     except Exception as e:
         log.error(f"  [Algolia] Discovery failed: {e}")
 
