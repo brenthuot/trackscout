@@ -953,41 +953,90 @@ function EventProgressChart({event, performances}) {
 
       {/* EXPANDED: all perfs, x = chronological order, year dividers on x-axis */}
       {expanded && (
-        <svg viewBox={`0 0 ${EVW} ${EVH}`} width="100%" style={{display:"block"}}>
-          {/* Y gridlines + labels */}
-          {[0,0.5,1].map(t=>{
-            const y=EP.top+t*(EVH-EP.top-EP.bottom);
-            const val=field?maxMark-t*markRange:minMark+t*markRange;
-            return <g key={t}>
-              <line x1={EP.left} x2={EVW-EP.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
-              <text x={EP.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
-            </g>;
-          })}
-          {/* Year boundary vertical lines + year labels below x-axis */}
-          {yearBounds.map(({yr,i},idx)=>{
-            const x=ex(i);
-            const isLast=idx===yearBounds.length-1;
-            return <g key={yr}>
-              {i>0 && <line x1={x} x2={x} y1={EP.top} y2={EVH-EP.bottom+4} stroke={T.border} strokeWidth={0.8} strokeDasharray="3,2"/>}
-              <text x={isLast ? Math.min(x, EVW-EP.right-4) : x} y={EVH-EP.bottom+14} textAnchor={isLast?"end":"start"} fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif" fontWeight="600">{yr}</text>
-            </g>;
-          })}
-          {/* Connect-the-dots line */}
-          <polyline points={eLine} fill="none" stroke={T.orange} strokeWidth={1.5} strokeOpacity={0.5}/>
-          {/* Individual performance dots */}
-          {perfs.map((p,i)=>{
-            const isPR=p.mark===prMark;
-            return <g key={i}>
-              <circle cx={ex(i)} cy={ey(p.mark)} r={isPR?5:3}
-                fill={isPR?T.orange:"rgba(0,0,0,0.07)"}
-                stroke={isPR?T.orangeD:T.borderH}
-                strokeWidth={isPR?1.5:0.8}>
-                <title>{p.mark_display||fmtTime(p.mark)}{p.meet_name?` — ${p.meet_name}`:""} ({p.year})</title>
-              </circle>
-              {isPR && <text x={ex(i)} y={ey(p.mark)-9} textAnchor="middle" fontSize={8} fill={T.orange} fontFamily="monospace" fontWeight="700">{p.mark_display||fmtTime(p.mark)}</text>}
-            </g>;
-          })}
-        </svg>
+        <>
+          <svg viewBox={`0 0 ${EVW} ${EVH}`} width="100%" style={{display:"block"}}>
+            {/* Y gridlines + labels */}
+            {[0,0.5,1].map(t=>{
+              const y=EP.top+t*(EVH-EP.top-EP.bottom);
+              const val=field?maxMark-t*markRange:minMark+t*markRange;
+              return <g key={t}>
+                <line x1={EP.left} x2={EVW-EP.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
+                <text x={EP.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
+              </g>;
+            })}
+            {/* Year boundary vertical lines + year labels below x-axis */}
+            {yearBounds.map(({yr,i},idx)=>{
+              const x=ex(i);
+              const isLast=idx===yearBounds.length-1;
+              return <g key={yr}>
+                {i>0 && <line x1={x} x2={x} y1={EP.top} y2={EVH-EP.bottom+4} stroke={T.border} strokeWidth={0.8} strokeDasharray="3,2"/>}
+                <text x={isLast ? Math.min(x, EVW-EP.right-4) : x} y={EVH-EP.bottom+14} textAnchor={isLast?"end":"start"} fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif" fontWeight="600">{yr}</text>
+              </g>;
+            })}
+            {/* Connect-the-dots line */}
+            <polyline points={eLine} fill="none" stroke={T.orange} strokeWidth={1.5} strokeOpacity={0.5}/>
+            {/* Individual performance dots */}
+            {perfs.map((p,i)=>{
+              const isPR=p.mark===prMark;
+              return <g key={i}>
+                <circle cx={ex(i)} cy={ey(p.mark)} r={isPR?5:3}
+                  fill={isPR?T.orange:"rgba(0,0,0,0.07)"}
+                  stroke={isPR?T.orangeD:T.borderH}
+                  strokeWidth={isPR?1.5:0.8}>
+                  <title>{p.mark_display||fmtTime(p.mark)}{p.meet_name?` — ${p.meet_name}`:""} ({p.year})</title>
+                </circle>
+                {isPR && <text x={ex(i)} y={ey(p.mark)-9} textAnchor="middle" fontSize={8} fill={T.orange} fontFamily="monospace" fontWeight="700">{p.mark_display||fmtTime(p.mark)}</text>}
+              </g>;
+            })}
+          </svg>
+
+          {/* Performance list */}
+          <div style={{marginTop:6,maxHeight:180,overflowY:"auto",borderTop:`1px solid ${T.border}`,paddingTop:6}}>
+            {(() => {
+              const sorted = [...perfs].reverse();
+              // Compute season bests: best mark per (year+season) combo
+              const seasonBestSet = new Set();
+              const grouped = {};
+              perfs.forEach(p => {
+                const key = `${p.year}-${p.season}`;
+                if (!grouped[key]) grouped[key] = [];
+                grouped[key].push(p);
+              });
+              Object.values(grouped).forEach(group => {
+                const best = field
+                  ? group.reduce((b,p)=>p.mark>b.mark?p:b)
+                  : group.reduce((b,p)=>p.mark<b.mark?p:b);
+                seasonBestSet.add(best);
+              });
+
+              return sorted.map((p, i) => {
+                const isPR = p.mark === prMark;
+                const isSB = !isPR && seasonBestSet.has(p);
+                const prevP = sorted[i - 1];
+                const seasonChanged = prevP && (prevP.season !== p.season || prevP.year !== p.year);
+                const markColor = isPR ? T.orange : isSB ? T.blueL : T.offWhite;
+                const markWeight = (isPR || isSB) ? 700 : 400;
+                return (
+                  <div key={i}>
+                    {seasonChanged && (
+                      <div style={{borderTop:`1px dashed ${T.border}`,margin:"4px 0"}}/>
+                    )}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 2px",borderBottom:`1px solid ${T.border}22`}}>
+                      <span style={{fontFamily:"monospace",fontSize:11,color:markColor,fontWeight:markWeight,display:"flex",alignItems:"center",gap:5}}>
+                        {p.mark_display||fmtTime(p.mark)}
+                        {isPR && <span style={{fontSize:8,background:T.orange,color:"#fff",borderRadius:3,padding:"1px 4px",letterSpacing:0.5}}>PR</span>}
+                        {isSB && <span style={{fontSize:8,background:T.blueL,color:"#fff",borderRadius:3,padding:"1px 4px",letterSpacing:0.5}}>SB</span>}
+                      </span>
+                      <span style={{color:T.grayM,fontSize:10,maxWidth:"58%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"right"}}>
+                        {p.meet_name||"—"} <span style={{color:T.grayL,marginLeft:4}}>{p.season ? `${p.season} ` : ""}{p.year}</span>
+                      </span>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        </>
       )}
     </div>
   );
