@@ -876,10 +876,10 @@ function HometownPanel({athletes, focusedHometown, onFocusHometown}) {
 
 // ── EVENT PROGRESS CHART ──────────────────────────────────────────────────────
 function EventProgressChart({event, performances}) {
-  const W = 280, H = 110, PAD = {top:12,right:12,bottom:24,left:38};
+  const [expanded, setExpanded] = useState(false);
   const field = isFieldEvent(event);
 
-  // Filter to this event, sort by year then mark
+  // All perfs for this event with valid data
   const perfs = performances
     .filter(p => p.event === event && p.mark && p.year)
     .sort((a,b) => a.year - b.year || (field ? b.mark - a.mark : a.mark - b.mark));
@@ -890,16 +890,9 @@ function EventProgressChart({event, performances}) {
   const marks = perfs.map(p=>p.mark);
   const minMark = Math.min(...marks), maxMark = Math.max(...marks);
   const markRange = maxMark - minMark || 1;
+  const prMark = field ? Math.max(...marks) : Math.min(...marks);
 
-  const xScale = yr => PAD.left + (years.indexOf(yr)/(Math.max(years.length-1,1))) * (W - PAD.left - PAD.right);
-  const yScale = m => {
-    const norm = field
-      ? (m - minMark) / markRange          // field: higher = higher on chart
-      : 1 - (m - minMark) / markRange;     // time: lower = higher on chart
-    return PAD.top + norm * (H - PAD.top - PAD.bottom);
-  };
-
-  // Year bests (the line)
+  // Year bests (the summary line)
   const yearBests = years.map(yr => {
     const yPerfs = perfs.filter(p=>p.year===yr);
     const best = field
@@ -908,52 +901,114 @@ function EventProgressChart({event, performances}) {
     return {yr, mark: best.mark, display: best.mark_display || fmtTime(best.mark)};
   });
 
-  const prMark = field ? Math.max(...marks) : Math.min(...marks);
+  // Chart uses a fixed viewBox — SVG scales to 100% width automatically
+  const VW = 260, VH = expanded ? 160 : 120;
+  const PAD = {top:16, right:14, bottom:26, left:42};
+
+  const xScale = yr => PAD.left + (years.indexOf(yr) / Math.max(years.length-1, 1)) * (VW - PAD.left - PAD.right);
+  const yScale = m => {
+    const norm = field
+      ? (m - minMark) / markRange
+      : 1 - (m - minMark) / markRange;
+    return PAD.top + norm * (VH - PAD.top - PAD.bottom);
+  };
+
   const linePoints = yearBests.map(b=>`${xScale(b.yr)},${yScale(b.mark)}`).join(" ");
 
   return (
-    <div style={{marginBottom:12}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-        <span style={{color:T.orange,fontSize:10,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:700}}>{event}</span>
-        <span style={{color:T.dim,fontSize:9,fontFamily:"monospace"}}>{perfs.length} marks · PR: <span style={{color:T.orange,fontWeight:700}}>{fmtTime(prMark)}</span></span>
+    <div style={{marginBottom:14,borderBottom:`1px solid ${T.border}`,paddingBottom:10}}>
+      {/* Header row */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <span style={{color:T.orange,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",fontWeight:700}}>{event}</span>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{color:T.grayM,fontSize:9,fontFamily:"monospace"}}>
+            {perfs.length} marks · PR: <span style={{color:T.orange,fontWeight:700}}>{fmtTime(prMark)}</span>
+          </span>
+          <button onClick={()=>setExpanded(e=>!e)} style={{
+            background:"transparent",border:`1px solid ${T.border}`,borderRadius:4,
+            color:T.grayM,fontSize:8,cursor:"pointer",padding:"1px 5px",
+            fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:0.5,
+            transition:"all 0.12s"
+          }}>{expanded ? "▲ collapse" : "▼ expand"}</button>
+        </div>
       </div>
-      <svg width={W} height={H} style={{overflow:"visible",display:"block"}}>
-        {/* Y-axis gridlines */}
-        {[0,0.5,1].map(t => {
-          const y = PAD.top + t*(H-PAD.top-PAD.bottom);
-          const val = field ? minMark + (1-t)*markRange : minMark + t*markRange;
+
+      {/* Responsive SVG — viewBox handles all scaling */}
+      <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" style={{display:"block",overflow:"visible"}}>
+        {/* Y-axis gridlines + labels */}
+        {[0, 0.5, 1].map(t => {
+          const y = PAD.top + t * (VH - PAD.top - PAD.bottom);
+          const val = field ? maxMark - t * markRange : minMark + t * markRange;
           return (
             <g key={t}>
-              <line x1={PAD.left} x2={W-PAD.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
-              <text x={PAD.left-4} y={y+3} textAnchor="end" fontSize={7} fill={T.dim} fontFamily="monospace">{fmtTime(val)}</text>
+              <line x1={PAD.left} x2={VW-PAD.right} y1={y} y2={y} stroke={T.border} strokeWidth={0.5}/>
+              <text x={PAD.left-4} y={y+3} textAnchor="end" fontSize={8} fill={T.grayM} fontFamily="monospace">{fmtTime(val)}</text>
             </g>
           );
         })}
-        {/* Year labels on X axis */}
+
+        {/* X-axis year labels */}
         {years.map(yr => (
-          <text key={yr} x={xScale(yr)} y={H-4} textAnchor="middle" fontSize={8} fill={T.dim} fontFamily="'Barlow Condensed',sans-serif">{yr}</text>
+          <text key={yr} x={xScale(yr)} y={VH-6} textAnchor="middle" fontSize={9} fill={T.grayM} fontFamily="'Barlow Condensed',sans-serif">{yr}</text>
         ))}
-        {/* Line connecting year bests */}
-        {yearBests.length > 1 && (
-          <polyline points={linePoints} fill="none" stroke={T.orange} strokeWidth={1.5} strokeOpacity={0.6}/>
-        )}
-        {/* All performance dots */}
-        {perfs.map((p,i) => {
+
+        {/* All-perfs scatter (expanded mode) — shown as small gray dots */}
+        {expanded && perfs.map((p,i) => {
           const isPR = p.mark === prMark;
           return (
-            <circle key={i} cx={xScale(p.year)} cy={yScale(p.mark)} r={isPR?4:2.5}
-              fill={isPR?T.orange:T.bgCard} stroke={isPR?T.orangeD:T.borderH}
-              strokeWidth={isPR?1.5:1}>
-              <title>{p.mark_display || fmtTime(p.mark)} — {p.meet_name||p.year}</title>
+            <circle key={`all-${i}`} cx={xScale(p.year)} cy={yScale(p.mark)}
+              r={isPR ? 4.5 : 2.5}
+              fill={isPR ? T.orange : "rgba(0,0,0,0.08)"}
+              stroke={isPR ? T.orangeD : T.borderH}
+              strokeWidth={isPR ? 1.5 : 0.8}>
+              <title>{p.mark_display || fmtTime(p.mark)}{p.meet_name ? ` — ${p.meet_name}` : ""} ({p.year})</title>
             </circle>
           );
         })}
-        {/* Year best labels */}
+
+        {/* Best-per-year line */}
+        {yearBests.length > 1 && (
+          <polyline points={linePoints} fill="none" stroke={T.orange} strokeWidth={1.8} strokeOpacity={0.75}/>
+        )}
+
+        {/* Year-best dots (always visible) */}
+        {!expanded && yearBests.map((b,i) => {
+          const isPR = b.mark === prMark;
+          return (
+            <circle key={`best-${i}`} cx={xScale(b.yr)} cy={yScale(b.mark)}
+              r={isPR ? 4.5 : 3}
+              fill={isPR ? T.orange : T.bgCard}
+              stroke={isPR ? T.orangeD : T.borderH}
+              strokeWidth={isPR ? 1.5 : 1}>
+              <title>{b.display} ({b.yr})</title>
+            </circle>
+          );
+        })}
+
+        {/* Year-best value labels */}
         {yearBests.map(b => (
-          <text key={b.yr} x={xScale(b.yr)} y={yScale(b.mark)-7} textAnchor="middle"
-            fontSize={7} fill={T.orange} fontFamily="monospace" fontWeight="700">{b.display}</text>
+          <text key={`lbl-${b.yr}`} x={xScale(b.yr)} y={yScale(b.mark)-8}
+            textAnchor="middle" fontSize={8} fill={T.orange}
+            fontFamily="monospace" fontWeight="700">{b.display}</text>
         ))}
       </svg>
+
+      {/* Expanded: scrollable list of all individual performances */}
+      {expanded && (
+        <div style={{marginTop:8,maxHeight:160,overflowY:"auto"}}>
+          {[...perfs].reverse().map((p,i) => (
+            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"3px 0",borderBottom:`1px solid ${T.border}44`,fontSize:10}}>
+              <span style={{fontFamily:"monospace",color:p.mark===prMark?T.orange:T.offWhite,fontWeight:p.mark===prMark?700:400}}>
+                {p.mark_display || fmtTime(p.mark)}
+                {p.mark===prMark && <span style={{fontSize:8,marginLeft:4,color:T.orange}}>PR</span>}
+              </span>
+              <span style={{color:T.grayM,fontSize:9,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"right"}}>
+                {p.meet_name || "—"} <span style={{color:T.grayL}}>{p.year}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
