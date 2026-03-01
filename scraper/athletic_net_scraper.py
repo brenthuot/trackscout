@@ -138,7 +138,12 @@ def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
             log.warning(f"  [Google] HTTP {r.status_code}")
             return []
 
+        # Debug: dump all hrefs found on the page
         soup = BeautifulSoup(r.text, "lxml")
+        all_hrefs = [a.get("href","") for a in soup.find_all("a", href=True)]
+        anet_hrefs = [h for h in all_hrefs if "athletic.net" in h]
+        log.info(f"  [Google] Total hrefs: {len(all_hrefs)}, athletic.net hrefs: {anet_hrefs[:10]}")
+        log.info(f"  [Google] First 500 chars of body: {r.text[:500]}")
 
         # Extract URLs from Google result links
         urls = []
