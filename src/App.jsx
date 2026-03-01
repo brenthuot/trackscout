@@ -168,13 +168,19 @@ const getState = (hometown) => {
 // ── HOMETOWN COORDINATE RESOLVER ──────────────────────────────────────────────
 // Returns null if no real hometown — callers use this to skip rendering
 function resolveHometownCoords(hometown) {
-  if (!hometown) return null;
-  const parts = hometown.split(", ");
-  if (parts.length >= 2) {
-    const state = parts[parts.length - 1].trim().toUpperCase().slice(0, 2);
-    if (STATE_CAPITALS[state]) return STATE_CAPITALS[state];
-  }
-  return null; // unknown format — don't fake it
+  if (!hometown || typeof hometown !== "string") return null;
+  const s = hometown.trim();
+  // Must match exactly: "City Name, ST" — city part only letters/spaces/periods/hyphens/apostrophes
+  // Reject anything with digits, "on ", "Championships", "Meet", etc.
+  const match = s.match(/^([A-Za-z][A-Za-z\s\.\-']{1,40}),\s+([A-Z]{2})$/);
+  if (!match) return null;
+  const city = match[1].trim();
+  const state = match[2];
+  // Reject if city contains suspicious words
+  const bad = /championship|meet|invit|classic|relay|cross.?country|track|indoor|outdoor|university|college|vs|on/i;
+  if (bad.test(city)) return null;
+  if (!STATE_CAPITALS[state]) return null;
+  return STATE_CAPITALS[state];
 }
 
 // ── SUPABASE DATA TRANSFORMER ─────────────────────────────────────────────────
@@ -624,13 +630,14 @@ function HeatmapPanel({athletes}) {
 
   const topCities = useMemo(() => {
     const map={};
-    athletes.forEach(a=>{if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
+    athletes.forEach(a=>{if(!a.hometown||!a.hometownCoords)return;if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
     return Object.values(map).sort((a,b)=>b.count-a.count).slice(0,15);
   }, [athletes]);
 
   const topStates = useMemo(() => {
     const map={};
     athletes.forEach(a=>{
+      if(!a.hometown||!a.hometownCoords)return;
       const st=getState(a.hometown); if(!st) return;
       if(!map[st]) map[st]={abbr:st,name:STATE_NAMES[st]||st,count:0,cities:new Set()};
       map[st].count++; map[st].cities.add(a.hometown);
