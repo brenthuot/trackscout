@@ -422,12 +422,30 @@ def scrape_athlete(info: dict) -> dict | None:
                         })
                         events_set.add(event_norm)
 
-    # ── Skip field-event-only athletes ────────────────────────────────────────
+    # Skip field-event-only athletes ────────────────────────────────────────
     # If every event the athlete has is a field event, they're not relevant.
     # Athletes with zero performances also get skipped here.
+    # We still save a minimal record so future runs don't re-visit them.
     if not events_set or events_set.issubset(FIELD_EVENTS):
         log.info(f"    SKIP (field-only or no perfs): {name}")
-        return None
+        return {
+            "id": f"tfrrs_{tfrrs_id}",
+            "name": name,
+            "source": "tfrrs",
+            "source_id": tfrrs_id,
+            "college": college,
+            "conference": info.get("conference", ""),
+            "hometown": hometown,
+            "hometown_state": hometown_state,
+            "hs_grad_year": hs_grad_year,
+            "college_year": college_year,
+            "gender": info.get("gender", "M"),
+            "events": [],
+            "tfrrs_url": url,
+            "updated_at": datetime.utcnow().isoformat(),
+            "field_only": True,
+            "performances": [],
+        }
 
     log.info(f"    {name} ({info.get('gender','')}) Y{college_year or '?'} HS:{hs_grad_year or '?'} — {len(performances)} perfs")
 
@@ -451,11 +469,13 @@ def scrape_athlete(info: dict) -> dict | None:
 
 
 # ── SUPABASE WRITER ───────────────────────────────────────────────────────────
-def save_athlete(data: dict) -> bool:
+def save_athlete(data: dict) -> tuple[bool, bool]:
+    """Returns (saved_ok, is_field_only)"""
     performances = data.pop("performances", [])
+    field_only = data.pop("field_only", False)
     try:
         supabase.table("athletes").upsert(data, on_conflict="id").execute()
-        if performances:
+        if not field_only and performances:
             supabase.table("performances").delete().eq("athlete_id", data["id"]).execute()
             rows = [
                 {**p, "athlete_id": data["id"], "source": "tfrrs"}
@@ -464,11 +484,12 @@ def save_athlete(data: dict) -> bool:
             ]
             for i in range(0, len(rows), 50):
                 supabase.table("performances").insert(rows[i:i+50]).execute()
-        log.info(f"    ✓ Saved: {data['name']}")
-        return True
+        if not field_only:
+            log.info(f"    ✓ Saved: {data['name']}")
+        return True, field_only
     except Exception as e:
         log.error(f"    ✗ Supabase error for {data.get('name')}: {e}")
-        return False
+        return False, field_only
 
 
 def get_scraped_ids() -> set:
@@ -585,13 +606,17 @@ def run_scraper(group: str = "all"):
 
                 data = scrape_athlete(info)
                 if data:
-                    if save_athlete(data):
-                        saved += 1
+                    ok, is_field_only = save_athlete(data)
+                    if ok:
                         already_done.add(data["source_id"])
+                        if is_field_only:
+                            field_only += 1
+                        else:
+                            saved += 1
                     else:
                         errors += 1
                 else:
-                    field_only += 1
+                    errors += 1
 
     log.info("=" * 60)
     log.info(f"Teams found: {found_teams} | Teams 404'd: {missing_teams}")
