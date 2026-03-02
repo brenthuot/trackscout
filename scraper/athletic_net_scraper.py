@@ -65,6 +65,12 @@ US_STATES = {
     "VA","WA","WV","WI","WY","DC"
 }
 
+NOISE_WORDS = [
+    "track", "field", "cross", "sport", "event", "collegiate",
+    "club", "unattached", "relay", "indoor", "outdoor", "rankings",
+    "suggest", "correction", "middle school", "high school"
+]
+
 
 # ── MARK PARSER ───────────────────────────────────────────────────────────────
 def parse_mark(s: str) -> float | None:
@@ -91,12 +97,7 @@ def parse_mark(s: str) -> float | None:
 # ── PLAYWRIGHT SEARCH ─────────────────────────────────────────────────────────
 def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
     """Search athletic.net for athlete, return list of profile URLs."""
-    from urllib.parse import quote
-    # Properly encode the full query including quotes
-    query = name
-    if hs_grad_year:
-        query += f' {hs_grad_year}'
-    encoded_query = quote(query)  # encodes quotes as %22, spaces as %20
+    # No year in query — causes no results. Filter by grad year on profile instead.
     search_url = f"https://www.athletic.net/search#?q={name}"
 
     try:
@@ -107,12 +108,10 @@ def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
         try:
             page.wait_for_selector("a[href*='/athlete/']", timeout=12000)
         except PlaywrightTimeout:
-            # Take a screenshot to see what's on the page
             try:
                 page.screenshot(path=f"/tmp/search_debug_{name.replace(' ','_')}.png")
                 log.info(f"  [Search] Screenshot saved. Page title: {page.title()!r}")
                 log.info(f"  [Search] Page URL: {page.url!r}")
-                # Log first 500 chars of visible text
                 body = page.inner_text("body")[:500]
                 log.info(f"  [Search] Body text: {body!r}")
             except Exception:
@@ -174,25 +173,31 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
         hometown_state = ""
         high_school = ""
 
-        # State from title: "Name - ST Track and Field Bio"
-        title_state = re.search(r'-\s+([A-Z]{2})\s+Track and Field Bio', title)
+        # State from title: "Name - AZ Track & Field Bio"
+        # Handles both "Track & Field" and "Track and Field"
+        title_state = re.search(r'-\s+([A-Z]{2})\s+Track(?:\s+and\s+|&amp;|&\s*)Field Bio', title)
         if title_state and title_state.group(1) in US_STATES:
             hometown_state = title_state.group(1)
 
         # Try to get full rendered text and look for structured data
         try:
-            # athletic.net shows hometown as "City, ST" in the bio section
             body_text = page.inner_text("body")
 
-# Look for "City, ST" pattern — find ALL matches, take the last clean one
-            # (profile text has college team junk before the actual hometown)
+            # DEBUG — log body snippet to help diagnose extraction issues
+            log.info(f"    Body snippet: {body_text[:400]!r}")
+
+            # Find ALL "City, ST" matches in rendered text, iterate in reverse
+            # to skip college team junk (e.g. "WildcatsCollegiate\nTucson, AZ")
+            # which appears before the actual hometown
+            states_pattern = '|'.join(US_STATES)
             all_matches = re.findall(
-                r'([\w][\w\s\.\'\-]{1,28}),\s+(' + '|'.join(US_STATES) + r')\b',
+                r'([\w][\w\s\.\'\-]{1,28}),\s+(' + states_pattern + r')\b',
                 body_text
             )
             for city, state in reversed(all_matches):
                 city = city.strip()
-                if any(kw in city.lower() for kw in ["track", "field", "cross", "sport", "event", "collegiate", "club", "unattached"]):
+                # Skip noise matches
+                if any(kw in city.lower() for kw in NOISE_WORDS):
                     continue
                 if len(city) < 2:
                     continue
@@ -221,7 +226,6 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
         if not hometown:
             try:
                 json_data = page.evaluate("""() => {
-                    // Try common Angular/Next.js state patterns
                     const sources = [
                         window.__INITIAL_STATE__,
                         window.__STATE__,
