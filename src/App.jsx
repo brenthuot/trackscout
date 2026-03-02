@@ -172,15 +172,8 @@ const CITY_COORDS = {
   "Lawrence, KS":[38.973,-95.235],"State College, PA":[40.793,-77.860],"Clemson, SC":[34.683,-82.837],
   "West Lafayette, IN":[40.428,-86.910],"East Lansing, MI":[42.737,-84.484],"Fargo, ND":[46.877,-96.790],
   "Manhattan, KS":[39.183,-96.572],"Stillwater, OK":[36.122,-97.058],"Denton, TX":[33.215,-97.133],
-  "Jonesboro, AR":[35.842,-90.704],"Athens, GA":[33.961,-83.378],"Valdosta, GA":[30.833,-83.278],
-  "Harrisonburg, VA":[38.436,-78.869],"Charlottesville, VA":[38.030,-78.480],"Blacksburg, VA":[37.229,-80.414],
-  "Norfolk, VA":[36.851,-76.286],"Morgantown, WV":[39.634,-79.956],"Cambridge, MA":[42.374,-71.105],
-  "Amherst, MA":[42.375,-72.519],"Burlington, VT":[44.476,-73.212],"Princeton, NJ":[40.357,-74.668],
-  "Ithaca, NY":[42.443,-76.502],"Starkville, MS":[33.460,-88.822],"Oxford, MS":[34.366,-89.519],
-  "Pullman, WA":[46.730,-117.180],"Missoula, MT":[46.872,-113.993],"Bozeman, MT":[45.680,-111.044],
-  "Flagstaff, AZ":[35.198,-111.651],"Davis, CA":[38.544,-121.741],"Santa Barbara, CA":[34.421,-119.699],
-  "Evanston, IL":[42.048,-87.679],"Chapel Hill, NC":[35.913,-79.055],"Greenville, SC":[34.852,-82.394],
-  "Boone, NC":[36.217,-81.675],"Wilmington, NC":[34.226,-77.946],"Corvallis, OR":[44.564,-123.263],
+  "Athens, GA":[33.961,-83.378],"Blacksburg, VA":[37.229,-80.414],"Charlottesville, VA":[38.030,-78.480],
+  "Chapel Hill, NC":[35.913,-79.055],"Greenville, SC":[34.852,-82.394],"Corvallis, OR":[44.564,-123.263],
   "Tempe, AZ":[33.426,-111.940],"Logan, UT":[41.730,-111.834],"Laramie, WY":[41.312,-105.591],
   "Las Cruces, NM":[32.312,-106.778],"Evansville, IN":[37.972,-87.571],"Terre Haute, IN":[39.466,-87.414],
   "Springfield, IL":[39.798,-89.644],"Peoria, IL":[40.694,-89.589],"Bowling Green, KY":[36.990,-86.444],
@@ -190,38 +183,42 @@ const CITY_COORDS = {
   "Alexandria, VA":[38.805,-77.047],"Roanoke, VA":[37.271,-79.941],"Virginia Beach, VA":[36.853,-75.978],
   "Charleston, SC":[32.784,-79.940],"Mobile, AL":[30.694,-88.043],"Auburn, AL":[32.610,-85.480],
   "Oxford, OH":[39.508,-84.746],"Notre Dame, IN":[41.705,-86.235],"Spokane, WA":[47.659,-117.426],
-  "Pocatello, ID":[42.871,-112.446],"Ogden, UT":[41.223,-111.974],"Muncie, IN":[40.193,-85.387],
-  "Springfield, MO":[37.216,-93.292],"Topeka, KS":[39.048,-95.678],"Dubuque, IA":[42.500,-90.664],
-  "Green Bay, WI":[44.520,-88.016],"St. Paul, MN":[44.954,-93.090],"Rochester, MN":[44.022,-92.470],
-  "Bismarck, ND":[46.808,-100.784],"Lowell, MA":[42.633,-71.317],"Brockton, MA":[42.083,-71.018],
-  "Newton, MA":[42.337,-71.209],"Somerville, MA":[42.388,-71.100],"Pensacola, FL":[30.421,-87.217],
-  "Fort Lauderdale, FL":[26.122,-80.143],"Sarasota, FL":[27.337,-82.531],"Fort Myers, FL":[26.640,-81.873],
-  "Lakeland, FL":[28.040,-81.951],"Clearwater, FL":[27.966,-82.800],"Hattiesburg, MS":[31.329,-89.290],
-  "Tupelo, MS":[34.259,-88.704],"Kennesaw, GA":[34.023,-84.616],"Marietta, GA":[33.953,-84.550],
-  "Columbus, GA":[32.461,-84.988],"Statesboro, GA":[32.449,-81.783],"Rock Hill, SC":[34.925,-81.025],
-  "Spartanburg, SC":[34.946,-81.931],"Florence, SC":[34.195,-79.763],"Fayetteville, NC":[35.053,-78.878],
-  "High Point, NC":[35.956,-80.006],"Concord, NC":[35.409,-80.580],"Lynchburg, VA":[37.414,-79.142],
-  "Fredericksburg, VA":[38.304,-77.461],"Hampton, VA":[37.031,-76.343],"Erie, PA":[42.129,-80.085],
-  "Allentown, PA":[40.602,-75.470],"Scranton, PA":[41.409,-75.665],"Medford, OR":[42.327,-122.875],
-  "Salem, OR":[44.942,-123.030],"Nampa, ID":[43.541,-116.567],"Henderson, NV":[36.040,-114.982],
-  "Mesa, AZ":[33.415,-111.831],"Scottsdale, AZ":[33.494,-111.926],"Gilbert, AZ":[33.353,-111.789],
-  "Glendale, AZ":[33.539,-112.186],"Aurora, CO":[39.729,-104.832],"Pueblo, CO":[38.255,-104.609],
-  "Greeley, CO":[40.423,-104.709],"Rockford, IL":[42.271,-89.094],"Naperville, IL":[41.786,-88.148],
-  "Joliet, IL":[41.525,-88.082],"Overland Park, KS":[38.983,-94.671],"Joplin, MO":[37.084,-94.513],
-  "Grand Island, NE":[40.925,-98.342],"Council Bluffs, IA":[41.262,-95.861],"Sioux City, IA":[42.500,-96.400],
+  "Evanston, IL":[42.048,-87.679],"Amherst, MA":[42.375,-72.519],"Cambridge, MA":[42.374,-71.105],
+  "Burlington, VT":[44.476,-73.212],"Princeton, NJ":[40.357,-74.668],"Ithaca, NY":[42.443,-76.502],
+  "Starkville, MS":[33.460,-88.822],"Oxford, MS":[34.366,-89.519],"Pullman, WA":[46.730,-117.180],
+  "Missoula, MT":[46.872,-113.993],"Bozeman, MT":[45.680,-111.044],"Flagstaff, AZ":[35.198,-111.651],
+  "Davis, CA":[38.544,-121.741],"Santa Barbara, CA":[34.421,-119.699],"Boone, NC":[36.217,-81.675],
+  "Wilmington, NC":[34.226,-77.946],"Pocatello, ID":[42.871,-112.446],"Ogden, UT":[41.223,-111.974],
+  "Muncie, IN":[40.193,-85.387],"Springfield, MO":[37.216,-93.292],"Topeka, KS":[39.048,-95.678],
+  "Dubuque, IA":[42.500,-90.664],"Green Bay, WI":[44.520,-88.016],"St. Paul, MN":[44.954,-93.090],
+  "Rochester, MN":[44.022,-92.470],"Bismarck, ND":[46.808,-100.784],"Lowell, MA":[42.633,-71.317],
+  "Brockton, MA":[42.083,-71.018],"Newton, MA":[42.337,-71.209],"Pensacola, FL":[30.421,-87.217],
+  "Fort Lauderdale, FL":[26.122,-80.143],"Sarasota, FL":[27.337,-82.531],"Lakeland, FL":[28.040,-81.951],
+  "Clearwater, FL":[27.966,-82.800],"Hattiesburg, MS":[31.329,-89.290],"Tupelo, MS":[34.259,-88.704],
+  "Kennesaw, GA":[34.023,-84.616],"Marietta, GA":[33.953,-84.550],"Columbus, GA":[32.461,-84.988],
+  "Statesboro, GA":[32.449,-81.783],"Rock Hill, SC":[34.925,-81.025],"Spartanburg, SC":[34.946,-81.931],
+  "Florence, SC":[34.195,-79.763],"Fayetteville, NC":[35.053,-78.878],"High Point, NC":[35.956,-80.006],
+  "Concord, NC":[35.409,-80.580],"Lynchburg, VA":[37.414,-79.142],"Hampton, VA":[37.031,-76.343],
+  "Erie, PA":[42.129,-80.085],"Allentown, PA":[40.602,-75.470],"Scranton, PA":[41.409,-75.665],
+  "Medford, OR":[42.327,-122.875],"Salem, OR":[44.942,-123.030],"Nampa, ID":[43.541,-116.567],
+  "Henderson, NV":[36.040,-114.982],"Mesa, AZ":[33.415,-111.831],"Scottsdale, AZ":[33.494,-111.926],
+  "Gilbert, AZ":[33.353,-111.789],"Glendale, AZ":[33.539,-112.186],"Aurora, CO":[39.729,-104.832],
+  "Pueblo, CO":[38.255,-104.609],"Greeley, CO":[40.423,-104.709],"Rockford, IL":[42.271,-89.094],
+  "Naperville, IL":[41.786,-88.148],"Joliet, IL":[41.525,-88.082],"Overland Park, KS":[38.983,-94.671],
+  "Joplin, MO":[37.084,-94.513],"Grand Island, NE":[40.925,-98.342],"Sioux City, IA":[42.500,-96.400],
   "Davenport, IA":[41.524,-90.578],"Waterloo, IA":[42.497,-92.343],"Eau Claire, WI":[44.812,-91.499],
   "Appleton, WI":[44.262,-88.415],"Duluth, MN":[46.787,-92.100],"Moorhead, MN":[46.873,-96.768],
   "Rapid City, SD":[44.080,-103.231],"Billings, MT":[45.784,-108.501],"Cheyenne, WY":[41.140,-104.820],
-  "Casper, WY":[42.867,-106.313],"Helena, MT":[46.596,-112.027],"Idaho Falls, ID":[43.492,-112.034],
-  "Edmond, OK":[35.653,-97.478],"San Marcos, TX":[29.883,-97.941],"Nacogdoches, TX":[31.604,-94.655],
-  "Ruston, LA":[32.523,-92.638],"Monroe, LA":[32.510,-92.120],"Hammond, LA":[30.504,-90.462],
-  "Conway, AR":[35.089,-92.442],"Florence, AL":[34.800,-87.677],"Jacksonville, AL":[33.814,-85.765],
-  "Troy, AL":[31.810,-85.969],"Albany, GA":[31.579,-84.156],"Carrollton, GA":[33.580,-85.077],
-  "Radford, VA":[37.131,-80.576],"Huntington, WV":[38.415,-82.445],"Charleston, WV":[38.350,-81.633],
-  "Abilene, TX":[32.449,-99.733],"Killeen, TX":[31.117,-97.728],"Tyler, TX":[32.351,-95.301],
-  "Beaumont, TX":[30.086,-94.102],"Plano, TX":[33.020,-96.700],"Clarksville, TN":[36.530,-87.360],
-  "Owensboro, KY":[37.774,-87.113],"Midland, TX":[31.997,-102.078],"Surprise, AZ":[33.630,-112.368],
-  "Fort Wayne, IN":[41.130,-85.128],"DeKalb, IL":[41.929,-88.750],"Normal, IL":[40.515,-88.990],
+  "Helena, MT":[46.596,-112.027],"Idaho Falls, ID":[43.492,-112.034],"Fort Wayne, IN":[41.130,-85.128],
+  "Harrisonburg, VA":[38.436,-78.869],"Morgantown, WV":[39.634,-79.956],"Norfolk, VA":[36.851,-76.286],
+  "Fredericksburg, VA":[38.304,-77.461],"Conway, AR":[35.089,-92.442],"Jonesboro, AR":[35.842,-90.704],
+  "Fayetteville, AR":[36.062,-94.158],"Florence, AL":[34.800,-87.677],"Troy, AL":[31.810,-85.969],
+  "Albany, GA":[31.579,-84.156],"Valdosta, GA":[30.833,-83.278],"Abilene, TX":[32.449,-99.733],
+  "Tyler, TX":[32.351,-95.301],"Beaumont, TX":[30.086,-94.102],"Plano, TX":[33.020,-96.700],
+  "Clarksville, TN":[36.530,-87.360],"Owensboro, KY":[37.774,-87.113],"Midland, TX":[31.997,-102.078],
+  "Council Bluffs, IA":[41.262,-95.861],"DeKalb, IL":[41.929,-88.750],"Normal, IL":[40.515,-88.990],
+  "San Marcos, TX":[29.883,-97.941],"Nacogdoches, TX":[31.604,-94.655],"Ruston, LA":[32.523,-92.638],
+  "Hammond, LA":[30.504,-90.462],"Huntington, WV":[38.415,-82.445],"Radford, VA":[37.131,-80.576],
 };
 const STATE_CAPITALS = {
   AL:[32.361,-86.279],AK:[61.218,-149.900],AZ:[33.448,-112.074],AR:[34.746,-92.289],
@@ -254,6 +251,7 @@ function resolveHometownCoords(hometown) {
   if (!match) return null;
   const city = match[1].trim();
   const state = match[2];
+  // Word boundaries — won't reject Boston, Houston, Washington, Lexington
   const bad = /\b(championship|championships|invitational|classic|relays?|cross.?country|indoor|outdoor|university|college)\b/i;
   if (bad.test(city)) return null;
   if (!STATE_CAPITALS[state]) return null;
@@ -371,16 +369,13 @@ function drawHeatmap(canvas, athletes, projection) {
   if (W < 50 || H < 50) return;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, W, H);
-
   const pts = athletes
     .filter(a => a.hometownCoords)
     .map(a => projection([a.hometownCoords[1], a.hometownCoords[0]]))
     .filter(Boolean);
   if (!pts.length) return;
-
   const density = new Float32Array(W * H);
-
-  // Pass 1: tight kernel — sharp city hotspots
+  // Pass 1: tight city hotspot kernel
   const R1 = Math.max(8, Math.round(W * 0.011)), bw1 = R1 / 1.4;
   pts.forEach(([px, py]) => {
     const x0=Math.max(0,(px-R1)|0), x1=Math.min(W-1,(px+R1+1)|0);
@@ -390,8 +385,7 @@ function drawHeatmap(canvas, athletes, projection) {
       density[y*W+x] += Math.exp(-d2/(2*bw1*bw1));
     }
   });
-
-  // Pass 2: wide regional kernel — smooth NOAA-style blending between cities
+  // Pass 2: wide regional kernel for smooth NOAA-style blending
   const R2 = Math.max(35, Math.round(W * 0.042)), bw2 = R2 / 1.8;
   pts.forEach(([px, py]) => {
     const x0=Math.max(0,(px-R2)|0), x1=Math.min(W-1,(px+R2+1)|0);
@@ -401,21 +395,14 @@ function drawHeatmap(canvas, athletes, projection) {
       density[y*W+x] += 0.35 * Math.exp(-d2/(2*bw2*bw2));
     }
   });
-
   const vals = Array.from(density).filter(v=>v>0).sort((a,b)=>a-b);
   const mx = vals[Math.floor(vals.length * 0.995)] || vals[vals.length-1] || 1;
-
   // Warm palette: white → peach → salmon → brick → dark red
   const STOPS = [
     [0.00, null],
-    [0.02, [255,248,244,  18]],
-    [0.07, [252,220,200,  65]],
-    [0.16, [242,185,155, 115]],
-    [0.28, [226,143,104, 155]],
-    [0.44, [200, 92, 52, 188]],
-    [0.63, [168, 44, 18, 212]],
-    [0.82, [134, 12,  3, 228]],
-    [1.00, [ 95,  2,  0, 242]],
+    [0.02, [255,248,244, 18]],[0.07, [252,220,200, 65]],[0.16, [242,185,155,115]],
+    [0.28, [226,143,104,155]],[0.44, [200, 92, 52,188]],[0.63, [168, 44, 18,212]],
+    [0.82, [134, 12,  3,228]],[1.00, [ 95,  2,  0,242]],
   ];
   const lerp = (a,b,t) => a+(b-a)*t;
   const img = ctx.createImageData(W, H);
@@ -427,8 +414,8 @@ function drawHeatmap(canvas, athletes, projection) {
       if (t>=STOPS[k][0]&&t<=STOPS[k+1][0]){s0=STOPS[k];s1=STOPS[k+1];break;}
     }
     if (t>STOPS[STOPS.length-1][0]){s0=STOPS[STOPS.length-2];s1=STOPS[STOPS.length-1];}
-    const f = s1[0]===s0[0] ? 1 : (t-s0[0])/(s1[0]-s0[0]);
-    const c0=s0[1], c1=s1[1], ii=i*4;
+    const f=s1[0]===s0[0]?1:(t-s0[0])/(s1[0]-s0[0]);
+    const c0=s0[1],c1=s1[1],ii=i*4;
     img.data[ii]  =Math.round(lerp(c0[0],c1[0],f));
     img.data[ii+1]=Math.round(lerp(c0[1],c1[1],f));
     img.data[ii+2]=Math.round(lerp(c0[2],c1[2],f));
@@ -436,6 +423,7 @@ function drawHeatmap(canvas, athletes, projection) {
   }
   ctx.putImageData(img, 0, 0);
 }
+
 
 // ── US MAP ────────────────────────────────────────────────────────────────────
 function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, highlightHometown, mapMode, selectedStates}) {
@@ -454,7 +442,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const ro = new ResizeObserver(entries => {
       for (const e of entries) {
         const W=Math.round(e.contentRect.width), H=Math.round(e.contentRect.height);
-        if (W>10 && H>10) {
+        if (W>50 && H>50) {
           setDims({W, H});
           if (canvasRef.current) { canvasRef.current.width=W; canvasRef.current.height=H; }
         }
@@ -507,35 +495,28 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const active=anyFocus?stateFiltered.filter(a=>(highlightCollege?a.college===highlightCollege:true)&&(highlightHometown?a.hometown===highlightHometown:true)):stateFiltered;
     const dimmed=athletes.filter(a=>!stateFiltered.includes(a));
 
-    // Quadratic bezier helper: control point perpendicular to midpoint
-    // bend capped at 55px so cross-country arcs stay on the map
-    const makeBez = (h, c) => {
-      const mx=(h[0]+c[0])/2, my=(h[1]+c[1])/2;
-      const dx=c[0]-h[0], dy=c[1]-h[1];
-      const len=Math.sqrt(dx*dx+dy*dy)||1;
-      const bend=Math.min(len*0.15, 55);
-      return `M${h[0]},${h[1]} Q${mx-dy/len*bend},${my+dx/len*bend} ${c[0]},${c[1]}`;
-    };
     if (mapMode === "flows") {
-      // Cap to 500 arcs for performance; use stable deterministic sample
-      const MAX_FLOWS = 500;
-      const toShow = active.length > MAX_FLOWS
-        ? active.filter((_,i) => i % Math.ceil(active.length / MAX_FLOWS) === 0)
-        : active;
-      const n = toShow.length;
-      // Opacity scales down as more arcs appear
-      const arcOp = n > 300 ? 0.30 : n > 150 ? 0.48 : n > 60 ? 0.65 : 0.82;
-      const arcW  = n > 300 ? 0.85 : n > 150 ? 1.1  : n > 60 ? 1.3  : 1.6;
-
-      // Only draw dimmed ghost arcs when a college/hometown is highlighted
+      // Quadratic bezier: control pt perpendicular to midpoint, bend capped at 50px
+      // SVG arc (A) wraps into circles for long distances — bezier never does
+      const makeBez = (h, c) => {
+        const mx=(h[0]+c[0])/2, my=(h[1]+c[1])/2;
+        const dx=c[0]-h[0], dy=c[1]-h[1], len=Math.sqrt(dx*dx+dy*dy)||1;
+        const bend=Math.min(len*0.15, 50);
+        return `M${h[0]},${h[1]} Q${mx-dy/len*bend},${my+dx/len*bend} ${c[0]},${c[1]}`;
+      };
+      // Draw ALL athletes with hometownCoords — no cap so default view shows everything
+      const n = active.filter(a=>a.hometownCoords&&a.collegeCoords).length;
+      // Scale opacity/width with count so dense views stay readable
+      const arcOp = n > 500 ? 0.28 : n > 200 ? 0.45 : n > 80 ? 0.62 : 0.80;
+      const arcW  = n > 500 ? 0.8  : n > 200 ? 1.0  : n > 80 ? 1.3  : 1.6;
+      // Ghost arcs for dimmed athletes only when a focus is active
       if (anyFocus) {
         dimmed.forEach(a=>{
           const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
           g.append("path").attr("d",makeBez(h,c)).attr("fill","none").attr("stroke","rgba(0,0,0,0.025)").attr("stroke-width",0.6);
         });
       }
-
-      toShow.forEach(a=>{
+      active.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
         const dist=haversine(a.hometownCoords,a.collegeCoords), col=distColor(dist), isSel=selectedAthlete?.id===a.id;
         const arc=makeBez(h,c);
@@ -806,6 +787,7 @@ function applyFilters(athletes, filters, search="", performanceRanges={}) {
     if (filters.events?.length>0 && !Array.isArray(a.events)) return false;
     if (filters.events?.length>0 && !filters.events.some(e=>a.events.includes(e))) return false;
     if (filters.gender && a.gender !== filters.gender) return false;
+    if (filters.conference && a.conference!==filters.conference) return false;
     if (filters.college && a.college!==filters.college) return false;
     if (filters.hsYear && a.hsYear!==parseInt(filters.hsYear)) return false;
     if (filters.collegeYear && a.collegeYear!==parseInt(filters.collegeYear)) return false;
