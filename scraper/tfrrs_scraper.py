@@ -1,24 +1,22 @@
 """
-Run Stats — TFRRS Scraper v3
-Uses correct TFRRS URL format: /teams/tf/{STATE}_college_{m/f}_{Slug}.html
-Scrapes both Men's and Women's rosters.
-Excludes athletes who compete exclusively in field events.
+Run Stats — Athletic.net Backfill Scraper v4 (Playwright)
+Uses a real headless Chromium browser to search athletic.net and extract
+fully JS-rendered profile data: hometown, high school, HS performances.
+
+Usage:
+    python athletic_net_scraper.py               # backfill all missing hometown
+    python athletic_net_scraper.py --limit 5     # test with 5 athletes
+    python athletic_net_scraper.py --group 1     # conference group 1-6
+    python athletic_net_scraper.py --all         # re-process all athletes
 """
 
-import os
-import time
-import re
-import logging
+import os, re, logging, argparse, json, time
 from datetime import datetime
-import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from supabase import create_client, Client
 
 # ── LOGGING ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 # ── SUPABASE ──────────────────────────────────────────────────────────────────
@@ -27,33 +25,7 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-BASE_URL = "https://www.tfrrs.org"
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Referer": "https://www.tfrrs.org/",
-}
-RATE_LIMIT_SECONDS = 2.5
-
-# ── FIELD EVENTS (used to filter out field-only athletes) ─────────────────────
-# Any athlete whose entire event set is a subset of these will be skipped.
-FIELD_EVENTS = {"HJ", "LJ", "TJ", "PV", "SP", "DT", "HT", "JT", "WT", "Pent", "Hept", "Dec"}
-
-# ── CONFERENCE GROUPS ─────────────────────────────────────────────────────────
-# Rebalanced: each group pairs a large conference with a smaller one
-# so all 6 GitHub Actions runners take roughly equal time.
-#
-#   Group 1: SEC (14) + WCC (8)                  = 22 schools
-#   Group 2: Big Ten (14) + Big Sky (11)          = 25 schools
-#   Group 3: ACC (15) + Ivy (8)                   = 23 schools
-#   Group 4: Big 12 (10) + Atlantic 10 (12)       = 22 schools
-#   Group 5: Pac-12 (12) + American (12)          = 24 schools
-#   Group 6: Mountain West (12) + Big East (11)   = 23 schools
+RATE_LIMIT = 3.0   # seconds between page navigations
 
 CONFERENCE_GROUPS = {
     "1": ["SEC", "West Coast"],
@@ -64,609 +36,392 @@ CONFERENCE_GROUPS = {
     "6": ["Mountain West", "Big East"],
 }
 
-# ── TEAM DEFINITIONS ──────────────────────────────────────────────────────────
-TEAMS = {
-    # ── SEC ───────────────────────────────────────────────────────────────────
-    "Alabama":            ("AL", "Alabama",            "SEC"),
-    "Arkansas":           ("AR", "Arkansas",           "SEC"),
-    "Auburn":             ("AL", "Auburn",             "SEC"),
-    "Florida":            ("FL", "Florida",            "SEC"),
-    "Georgia":            ("GA", "Georgia",            "SEC"),
-    "Kentucky":           ("KY", "Kentucky",           "SEC"),
-    "LSU":                ("LA", "LSU",                "SEC"),
-    "Mississippi State":  ("MS", "Mississippi_State",  "SEC"),
-    "Missouri":           ("MO", "Missouri",           "SEC"),
-    "Ole Miss":           ("MS", "Ole_Miss",           "SEC"),
-    "South Carolina":     ("SC", "South_Carolina",     "SEC"),
-    "Tennessee":          ("TN", "Tennessee",          "SEC"),
-    "Texas A&M":          ("TX", "Texas_AM",           "SEC"),
-    "Vanderbilt":         ("TN", "Vanderbilt",         "SEC"),
-
-    # ── Big Ten ───────────────────────────────────────────────────────────────
-    "Illinois":           ("IL", "Illinois",           "Big Ten"),
-    "Indiana":            ("IN", "Indiana",            "Big Ten"),
-    "Iowa":               ("IA", "Iowa",               "Big Ten"),
-    "Maryland":           ("MD", "Maryland",           "Big Ten"),
-    "Michigan":           ("MI", "Michigan",           "Big Ten"),
-    "Michigan State":     ("MI", "Michigan_State",     "Big Ten"),
-    "Minnesota":          ("MN", "Minnesota",          "Big Ten"),
-    "Nebraska":           ("NE", "Nebraska",           "Big Ten"),
-    "Northwestern":       ("IL", "Northwestern",       "Big Ten"),
-    "Ohio State":         ("OH", "Ohio_State",         "Big Ten"),
-    "Penn State":         ("PA", "Penn_State",         "Big Ten"),
-    "Purdue":             ("IN", "Purdue",             "Big Ten"),
-    "Rutgers":            ("NJ", "Rutgers",            "Big Ten"),
-    "Wisconsin":          ("WI", "Wisconsin",          "Big Ten"),
-
-    # ── ACC ───────────────────────────────────────────────────────────────────
-    "Boston College":     ("MA", "Boston_College",     "ACC"),
-    "Clemson":            ("SC", "Clemson",            "ACC"),
-    "Duke":               ("NC", "Duke",               "ACC"),
-    "Florida State":      ("FL", "Florida_State",      "ACC"),
-    "Georgia Tech":       ("GA", "Georgia_Tech",       "ACC"),
-    "Louisville":         ("KY", "Louisville",         "ACC"),
-    "Miami (FL)":         ("FL", "Miami",              "ACC"),
-    "NC State":           ("NC", "NC_State",           "ACC"),
-    "North Carolina":     ("NC", "North_Carolina",     "ACC"),
-    "Notre Dame":         ("IN", "Notre_Dame",         "ACC"),
-    "Pittsburgh":         ("PA", "Pittsburgh",         "ACC"),
-    "Syracuse":           ("NY", "Syracuse",           "ACC"),
-    "Virginia":           ("VA", "Virginia",           "ACC"),
-    "Virginia Tech":      ("VA", "Virginia_Tech",      "ACC"),
-    "Wake Forest":        ("NC", "Wake_Forest",        "ACC"),
-
-    # ── Big 12 ────────────────────────────────────────────────────────────────
-    "Baylor":             ("TX", "Baylor",             "Big 12"),
-    "BYU":                ("UT", "BYU",                "Big 12"),
-    "Iowa State":         ("IA", "Iowa_State",         "Big 12"),
-    "Kansas":             ("KS", "Kansas",             "Big 12"),
-    "Kansas State":       ("KS", "Kansas_State",       "Big 12"),
-    "Oklahoma State":     ("OK", "Oklahoma_State",     "Big 12"),
-    "TCU":                ("TX", "TCU",                "Big 12"),
-    "Texas":              ("TX", "Texas",              "Big 12"),
-    "Texas Tech":         ("TX", "Texas_Tech",         "Big 12"),
-    "West Virginia":      ("WV", "West_Virginia",      "Big 12"),
-
-    # ── Pac-12 ────────────────────────────────────────────────────────────────
-    "Arizona":            ("AZ", "Arizona",            "Pac-12"),
-    "Arizona State":      ("AZ", "Arizona_State",      "Pac-12"),
-    "Cal":                ("CA", "California",         "Pac-12"),
-    "Colorado":           ("CO", "Colorado",           "Pac-12"),
-    "Oregon":             ("OR", "Oregon",             "Pac-12"),
-    "Oregon State":       ("OR", "Oregon_State",       "Pac-12"),
-    "Stanford":           ("CA", "Stanford",           "Pac-12"),
-    "UCLA":               ("CA", "UCLA",               "Pac-12"),
-    "USC":                ("CA", "USC",                "Pac-12"),
-    "Utah":               ("UT", "Utah",               "Pac-12"),
-    "Washington":         ("WA", "Washington",         "Pac-12"),
-    "Washington State":   ("WA", "Washington_State",   "Pac-12"),
-
-    # ── Ivy League ────────────────────────────────────────────────────────────
-    "Brown":              ("RI", "Brown",              "Ivy League"),
-    "Columbia":           ("NY", "Columbia",           "Ivy League"),
-    "Cornell":            ("NY", "Cornell",            "Ivy League"),
-    "Dartmouth":          ("NH", "Dartmouth",          "Ivy League"),
-    "Harvard":            ("MA", "Harvard",            "Ivy League"),
-    "Penn":               ("PA", "Penn",               "Ivy League"),
-    "Princeton":          ("NJ", "Princeton",          "Ivy League"),
-    "Yale":               ("CT", "Yale",               "Ivy League"),
-
-    # ── Big East ──────────────────────────────────────────────────────────────
-    "Butler":             ("IN", "Butler",             "Big East"),
-    "Creighton":          ("NE", "Creighton",          "Big East"),
-    "DePaul":             ("IL", "DePaul",             "Big East"),
-    "Georgetown":         ("DC", "Georgetown",         "Big East"),
-    "Marquette":          ("WI", "Marquette",          "Big East"),
-    "Providence":         ("RI", "Providence",         "Big East"),
-    "Seton Hall":         ("NJ", "Seton_Hall",         "Big East"),
-    "St. John's":         ("NY", "St_Johns",           "Big East"),
-    "Villanova":          ("PA", "Villanova",          "Big East"),
-    "Xavier":             ("OH", "Xavier",             "Big East"),
-    "UConn":              ("CT", "Connecticut",        "Big East"),
-
-    # ── Mountain West ─────────────────────────────────────────────────────────
-    "Air Force":          ("CO", "Air_Force",          "Mountain West"),
-    "Boise State":        ("ID", "Boise_State",        "Mountain West"),
-    "Colorado State":     ("CO", "Colorado_State",     "Mountain West"),
-    "Fresno State":       ("CA", "Fresno_State",       "Mountain West"),
-    "Hawaii":             ("HI", "Hawaii",             "Mountain West"),
-    "Nevada":             ("NV", "Nevada",             "Mountain West"),
-    "New Mexico":         ("NM", "New_Mexico",         "Mountain West"),
-    "San Diego State":    ("CA", "San_Diego_State",    "Mountain West"),
-    "San Jose State":     ("CA", "San_Jose_State",     "Mountain West"),
-    "UNLV":               ("NV", "UNLV",               "Mountain West"),
-    "Utah State":         ("UT", "Utah_State",         "Mountain West"),
-    "Wyoming":            ("WY", "Wyoming",            "Mountain West"),
-
-    # ── Big Sky ───────────────────────────────────────────────────────────────
-    "Eastern Washington": ("WA", "Eastern_Washington", "Big Sky"),
-    "Idaho":              ("ID", "Idaho",              "Big Sky"),
-    "Idaho State":        ("ID", "Idaho_State",        "Big Sky"),
-    "Montana":            ("MT", "Montana",            "Big Sky"),
-    "Montana State":      ("MT", "Montana_State",      "Big Sky"),
-    "Northern Arizona":   ("AZ", "Northern_Arizona",   "Big Sky"),
-    "Northern Colorado":  ("CO", "Northern_Colorado",  "Big Sky"),
-    "Portland State":     ("OR", "Portland_State",     "Big Sky"),
-    "Sacramento State":   ("CA", "Sacramento_State",   "Big Sky"),
-    "Southern Utah":      ("UT", "Southern_Utah",      "Big Sky"),
-    "Weber State":        ("UT", "Weber_State",        "Big Sky"),
-
-    # ── American Athletic ─────────────────────────────────────────────────────
-    "East Carolina":      ("NC", "East_Carolina",      "American"),
-    "Florida Atlantic":   ("FL", "Florida_Atlantic",   "American"),
-    "Memphis":            ("TN", "Memphis",            "American"),
-    "North Texas":        ("TX", "North_Texas",        "American"),
-    "Rice":               ("TX", "Rice",               "American"),
-    "South Florida":      ("FL", "South_Florida",      "American"),
-    "Temple":             ("PA", "Temple",             "American"),
-    "Tulane":             ("LA", "Tulane",             "American"),
-    "Tulsa":              ("OK", "Tulsa",              "American"),
-    "UAB":                ("AL", "UAB",                "American"),
-    "UTSA":               ("TX", "UTSA",               "American"),
-    "Wichita State":      ("KS", "Wichita_State",      "American"),
-
-    # ── Atlantic 10 ───────────────────────────────────────────────────────────
-    "Davidson":           ("NC", "Davidson",           "Atlantic 10"),
-    "Dayton":             ("OH", "Dayton",             "Atlantic 10"),
-    "Duquesne":           ("PA", "Duquesne",           "Atlantic 10"),
-    "Fordham":            ("NY", "Fordham",            "Atlantic 10"),
-    "George Mason":       ("VA", "George_Mason",       "Atlantic 10"),
-    "George Washington":  ("DC", "George_Washington",  "Atlantic 10"),
-    "UMass":              ("MA", "Massachusetts",      "Atlantic 10"),
-    "Rhode Island":       ("RI", "Rhode_Island",       "Atlantic 10"),
-    "Richmond":           ("VA", "Richmond",           "Atlantic 10"),
-    "Saint Louis":        ("MO", "Saint_Louis",        "Atlantic 10"),
-    "St. Bonaventure":    ("NY", "St_Bonaventure",     "Atlantic 10"),
-    "VCU":                ("VA", "VCU",                "Atlantic 10"),
-
-    # ── West Coast ────────────────────────────────────────────────────────────
-    "Gonzaga":            ("WA", "Gonzaga",            "West Coast"),
-    "Loyola Marymount":   ("CA", "Loyola_Marymount",   "West Coast"),
-    "Pepperdine":         ("CA", "Pepperdine",         "West Coast"),
-    "Portland":           ("OR", "Portland",           "West Coast"),
-    "Saint Mary's":       ("CA", "Saint_Marys",        "West Coast"),
-    "San Diego":          ("CA", "San_Diego",          "West Coast"),
-    "San Francisco":      ("CA", "San_Francisco",      "West Coast"),
-    "Santa Clara":        ("CA", "Santa_Clara",        "West Coast"),
-}
-
-# ── EVENT MAP ─────────────────────────────────────────────────────────────────
-# Short-form hurdle aliases (60H, 110H, 400H) are what TFRRS actually uses.
-# Long-form aliases kept as fallback.
-EVENT_MAP = {
-    "60": "60m", "60m": "60m", "60 Meters": "60m",
-    "60H": "60mH", "60 Hurdles": "60mH", "60m Hurdles": "60mH",
-    "100": "100m", "100m": "100m", "100 Meters": "100m",
-    "200": "200m", "200m": "200m", "200 Meters": "200m",
-    "400": "400m", "400m": "400m", "400 Meters": "400m",
-    "800": "800m", "800m": "800m", "800 Meters": "800m",
-    "1500": "1500m", "1500m": "1500m", "1,500": "1500m",
-    "Mile": "Mile", "1 Mile": "Mile",
-    "3000": "3000m", "3000m": "3000m", "3,000": "3000m",
-    "3000 Steeplechase": "3000SC", "3000m Steeplechase": "3000SC",
-    "5000": "5000m", "5000m": "5000m", "5,000": "5000m",
-    "10,000": "10000m", "10000": "10000m", "10000m": "10000m",
-    "110H": "110mH", "110 Hurdles": "110mH", "110m Hurdles": "110mH",
-    "100H": "100mH", "100 Hurdles": "100mH", "100m Hurdles": "100mH",
-    "400H": "400mH", "400 Hurdles": "400mH", "400m Hurdles": "400mH",
+ANET_EVENT_MAP = {
+    "100 Meters": "100m", "100m": "100m", "100 Meter Dash": "100m",
+    "200 Meters": "200m", "200m": "200m", "200 Meter Dash": "200m",
+    "400 Meters": "400m", "400m": "400m", "400 Meter Dash": "400m",
+    "800 Meters": "800m", "800m": "800m", "800 Meter Run": "800m",
+    "1,500 Meters": "1500m", "1500 Meters": "1500m", "1500m": "1500m",
+    "1 Mile Run": "Mile", "Mile": "Mile", "Mile Run": "Mile",
+    "3,000 Meters": "3000m", "3000 Meters": "3000m",
+    "3,000 Meter Steeplechase": "3000SC", "3000 Steeplechase": "3000SC",
+    "5,000 Meters": "5000m", "5000 Meters": "5000m",
+    "10,000 Meters": "10000m",
+    "110 Meter Hurdles": "110mH", "110m Hurdles": "110mH",
+    "100 Meter Hurdles": "100mH", "100m Hurdles": "100mH",
+    "400 Meter Hurdles": "400mH", "400m Hurdles": "400mH",
     "High Jump": "HJ", "Long Jump": "LJ", "Triple Jump": "TJ",
-    "Pole Vault": "PV", "Shot Put": "SP", "Discus": "DT",
-    "Hammer": "HT", "Javelin": "JT", "Weight Throw": "WT",
-    "Heptathlon": "Hept", "Decathlon": "Dec",
+    "Pole Vault": "PV", "Shot Put": "SP", "Discus Throw": "DT",
+    "Hammer Throw": "HT", "Javelin Throw": "JT", "Weight Throw": "WT",
+    "Pentathlon": "Pent", "Heptathlon": "Hept", "Decathlon": "Dec",
 }
 
-GENDERS = [("m", "Men"), ("f", "Women")]
+RELAY_KEYWORDS = {"relay", "4x", "medley", "4 x", "sprint medley", "distance medley"}
 
-
-# ── HTTP HELPER ───────────────────────────────────────────────────────────────
-def get_page(url: str, retries: int = 3) -> BeautifulSoup | None:
-    for attempt in range(retries):
-        try:
-            time.sleep(RATE_LIMIT_SECONDS)
-            resp = requests.get(url, headers=HEADERS, timeout=20)
-            if resp.status_code == 200:
-                return BeautifulSoup(resp.text, "lxml")
-            elif resp.status_code == 429:
-                log.warning("Rate limited — waiting 60s")
-                time.sleep(60)
-            elif resp.status_code == 404:
-                return None
-            else:
-                log.warning(f"HTTP {resp.status_code}: {url}")
-        except Exception as e:
-            log.error(f"Attempt {attempt+1} error: {e}")
-            time.sleep(5)
-    return None
+US_STATES = {
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
+    "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+    "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
+    "VA","WA","WV","WI","WY","DC"
+}
 
 
 # ── MARK PARSER ───────────────────────────────────────────────────────────────
 def parse_mark(s: str) -> float | None:
     if not s:
         return None
-    s = s.strip().lstrip("*").strip()
-    # Strip wind readings e.g. "(1.1)" or "(-0.7)" — present on all outdoor marks
-    s = re.sub(r'\s*\([^)]+\)\s*$', '', s).strip()
+    s = str(s).strip().lstrip("*").strip()
+    s = re.sub(r'\([^)]+\)', '', s).strip()
+    if re.match(r'^(DNF|DNS|DQ|NM|NH|ND|SCR|NT)$', s, re.I):
+        return None
     try:
         if ":" in s:
             parts = s.split(":")
             if len(parts) == 2:
                 return round(float(parts[0]) * 60 + float(parts[1]), 3)
-        return float(s.replace(",", ""))
+        m = re.match(r'^(\d+)-(\d+(?:\.\d+)?)$', s)
+        if m:
+            return round((float(m.group(1)) * 12 + float(m.group(2))) * 0.0254, 3)
+        cleaned = re.sub(r'[^0-9.]', '', s)
+        return float(cleaned) if cleaned else None
     except ValueError:
         return None
 
 
-# ── ATHLETE SCRAPER ───────────────────────────────────────────────────────────
-def scrape_athlete(info: dict) -> dict | None:
-    url = info["url"]
-    id_match = re.search(r"/athletes/(\d+)", url)
-    if not id_match:
-        return None
-    tfrrs_id = id_match.group(1)
+# ── PLAYWRIGHT SEARCH ─────────────────────────────────────────────────────────
+def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
+    """Search athletic.net for athlete, return list of profile URLs."""
+    # No year in query — year in query causes no results. Filter by grad year on profile instead.
+    search_url = f"https://www.athletic.net/search#?q={name}"
 
-    soup = get_page(url)
-    if not soup:
-        return None
+    try:
+        log.info(f"  [Search] {name} → {search_url}")
+        page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
 
-    name = info["name"]
-    for tag in soup.find_all(["h1", "h2", "h3"]):
-        t = tag.get_text(strip=True)
-        if len(t) > 3 and len(t) < 80 and not any(x in t.lower() for x in ["tfrrs", "track", "field"]):
-            cleaned = re.sub(r'\s*\([^)]+\)\s*$', '', t).strip()
-            cleaned = cleaned.split("|")[0].strip()
-            if cleaned:
-                name = " ".join(w.capitalize() for w in cleaned.split())
-            break
+        # Wait for Angular to process the hash and render athlete links
+        try:
+            page.wait_for_selector("a[href*='/athlete/']", timeout=12000)
+        except PlaywrightTimeout:
+            try:
+                page.screenshot(path=f"/tmp/search_debug_{name.replace(' ','_')}.png")
+                log.info(f"  [Search] Screenshot saved. Page title: {page.title()!r}")
+                log.info(f"  [Search] Page URL: {page.url!r}")
+                body = page.inner_text("body")[:500]
+                log.info(f"  [Search] Body text: {body!r}")
+            except Exception:
+                pass
+            log.info(f"  [Search] No athlete links appeared after 12s — no results")
+            return []
 
-    college_year = info.get("college_year")
-    hs_grad_year = info.get("hs_grad_year")
-    SEASON_YEAR = 2026
+        time.sleep(1)
 
-    if college_year is None:
-        CLASS_MAP = {"fr": 1, "so": 2, "jr": 3, "sr": 4, "grad": 5, "5th": 5, "6th": 6}
-        page_text = soup.get_text(" ")
-        m = re.search(r'\b(?:SR|JR|SO|FR|Grad|5th|6th)-(\d)\b', page_text, re.IGNORECASE)
-        if m:
-            college_year = int(m.group(1))
-        else:
+        links = page.eval_on_selector_all(
+            "a[href*='/athlete/']",
+            "els => els.map(e => e.href)"
+        )
+
+        urls = []
+        seen_ids = set()
+        for href in links:
+            m = re.search(r'athletic\.net/athlete/(\d+)', href)
+            if m and m.group(1) not in seen_ids:
+                seen_ids.add(m.group(1))
+                urls.append(f"https://www.athletic.net/athlete/{m.group(1)}/track-and-field/")
+
+        log.info(f"  [Search] Found {len(urls)} profile URLs: {urls[:3]}")
+        return urls
+
+    except PlaywrightTimeout:
+        log.warning(f"  [Search] Timeout for {name}")
+        return []
+    except Exception as e:
+        log.error(f"  [Search] Error for {name}: {e}")
+        return []
+
+
+# ── PLAYWRIGHT PROFILE SCRAPER ────────────────────────────────────────────────
+def scrape_profile(page, url: str, expected_name: str) -> dict | None:
+    """Load a fully rendered athletic.net profile page and extract all data."""
+    try:
+        log.info(f"  [Profile] Loading {url}")
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        # Wait for Angular to render the athlete name/bio
+        try:
+            page.wait_for_selector("h1, h2, title", timeout=10000)
+        except PlaywrightTimeout:
+            pass
+        time.sleep(2)  # extra buffer for full render
+
+        # ── Verify name ──────────────────────────────────────────────────────
+        title = page.title()
+        log.info(f"    Title: {title!r}")
+        expected_parts = expected_name.lower().split()
+        if len(expected_parts) >= 2:
+            if not all(p in title.lower() for p in expected_parts[:2]):
+                log.info(f"    Name mismatch: '{expected_name}' not in title '{title}'")
+                return None
+
+        # ── Extract hometown & high school from rendered DOM ─────────────────
+        hometown = ""
+        hometown_state = ""
+        high_school = ""
+
+        # State from title: "Name - AZ Track & Field Bio"
+        # Handles both "Track & Field" and "Track and Field"
+        title_state = re.search(r'-\s+([A-Z]{2})\s+Track(?:\s+and\s+|&amp;|&\s*)Field Bio', title)
+        if title_state and title_state.group(1) in US_STATES:
+            hometown_state = title_state.group(1)
+
+        try:
+            body_text = page.inner_text("body")
+
+            # Athletic.net renders hometown as a single line: "City, ST, USA"
+            # The \n anchor before the city prevents cross-line matches that
+            # accidentally grab college team names like "EaglesCollegiate\nChestnut Hill"
+            states_pattern = '|'.join(US_STATES)
             m = re.search(
-                r'\b(Senior|Junior|Sophomore|Freshman|Graduate|5th Year|6th Year)\b',
-                page_text, re.IGNORECASE
+                r'\n([\w][^\n,]{1,28}),\s+(' + states_pattern + r'),\s+USA\b',
+                body_text
             )
             if m:
-                word = m.group(1).lower().split()[0]
-                word_map = {"senior": 4, "junior": 3, "sophomore": 2, "freshman": 1, "graduate": 5}
-                college_year = word_map.get(word)
-            else:
-                m = re.search(r'\b(SR|JR|SO|FR)\b', page_text[:2000])
-                if m:
-                    college_year = CLASS_MAP.get(m.group(1).lower())
-        if college_year and 1 <= college_year <= 6 and hs_grad_year is None:
-            hs_grad_year = SEASON_YEAR - college_year
+                hometown = f"{m.group(1).strip()}, {m.group(2)}"
+                hometown_state = hometown_state or m.group(2)
 
-    college = info.get("college", "")
-    hometown = ""
-    hometown_state = ""
+            # Look for high school name
+            hs_patterns = [
+                r'(?:High School|HS)[:\s]+([A-Z][A-Za-z\s\.\-\']{3,50})',
+                r'([A-Z][A-Za-z\s\.\-\']{3,40}(?:High School|High|Academy|Prep))',
+                r'School[:\s]+([A-Z][A-Za-z\s\.\-\']{3,50})',
+            ]
+            for pat in hs_patterns:
+                m2 = re.search(pat, body_text)
+                if m2:
+                    candidate_hs = m2.group(1).strip()[:80]
+                    if len(candidate_hs) > 3:
+                        high_school = candidate_hs
+                        break
 
-    US_STATES = {
-        "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
-        "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
-        "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
-        "VA","WA","WV","WI","WY","DC",
-    }
-    for text in soup.stripped_strings:
-        t = text.strip()
-        m = re.match(r'^([\w\s\.\'\-]{2,40}),\s+([A-Z]{2})$', t)
-        if m:
-            city, state = m.group(1).strip(), m.group(2)
-            if state in US_STATES and len(city) >= 2:
-                hometown = t
-                hometown_state = state
-                break
+        except Exception as e:
+            log.debug(f"    Body text extraction error: {e}")
 
-    if not hometown:
-        for tag in soup.find_all(["li", "dd", "td", "span", "p"]):
-            t = tag.get_text(strip=True)
-            m = re.search(r'([\w\s\.\'\-]{2,40}),\s+([A-Z]{2})\b', t)
-            if m:
-                city, state = m.group(1).strip(), m.group(2)
-                if state in US_STATES and len(city) >= 2:
-                    hometown = f"{city}, {state}"
-                    hometown_state = state
-                    break
+        # Fallback: check page JSON state (Angular sometimes embeds data)
+        if not hometown:
+            try:
+                json_data = page.evaluate("""() => {
+                    const sources = [
+                        window.__INITIAL_STATE__,
+                        window.__STATE__,
+                        window.__PRELOADED_STATE__,
+                    ];
+                    for (const s of sources) {
+                        if (s) return JSON.stringify(s);
+                    }
+                    return null;
+                }""")
+                if json_data:
+                    data = json.loads(json_data)
+                    data_str = json.dumps(data)
+                    for key in ["hometown", "city", "location"]:
+                        m = re.search(f'"{key}"\\s*:\\s*"([^"]+)"', data_str)
+                        if m:
+                            hometown = m.group(1)
+                            break
+                    for key in ["highSchool", "school", "team"]:
+                        m = re.search(f'"{key}"\\s*:\\s*"([^"]+)"', data_str)
+                        if m and not high_school:
+                            high_school = m.group(1)[:80]
+                            break
+            except Exception:
+                pass
 
-    INDOOR_MONTHS  = {11, 12, 1, 2, 3}   # Nov–Mar
-    XC_MONTHS      = {8, 9, 10}            # Aug–Oct
-    # outdoor = Apr–Jul (default)
+        # ── Extract HS performances from rendered results table ───────────────
+        performances = []
+        try:
+            rows = page.query_selector_all("tr")
+            current_year = None
+            for row in rows:
+                cells = [td.inner_text().strip() for td in row.query_selector_all("td, th")]
+                if not cells:
+                    continue
+                for cell in cells:
+                    yr = re.search(r'\b(20[01]\d|202[0-6])\b', cell)
+                    if yr:
+                        current_year = int(yr.group(1))
+                if len(cells) < 2:
+                    continue
+                for i, cell in enumerate(cells):
+                    if any(kw in cell.lower() for kw in RELAY_KEYWORDS):
+                        continue
+                    event_norm = ANET_EVENT_MAP.get(cell.strip())
+                    if event_norm and i + 1 < len(cells):
+                        mark_num = parse_mark(cells[i + 1])
+                        if mark_num and 0 < mark_num < 100000:
+                            performances.append({
+                                "event": event_norm,
+                                "mark": mark_num,
+                                "mark_display": cells[i + 1],
+                                "year": current_year,
+                                "season": "outdoor",
+                                "level": "hs",
+                                "meet_name": "",
+                            })
+        except Exception as e:
+            log.debug(f"    Performance extraction error: {e}")
 
-    def infer_season(date_str: str) -> str:
-        """Infer indoor/outdoor/xc from a date string like 'Feb 13-14, 2026'."""
-        m = re.search(
-            r'\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|'
-            r'Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b',
-            date_str, re.IGNORECASE
-        )
-        if not m:
-            return "outdoor"
-        month_str = m.group(1)[:3].lower()
-        month_map = {"jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
-                     "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12}
-        month = month_map.get(month_str, 0)
-        if month in INDOOR_MONTHS:  return "indoor"
-        if month in XC_MONTHS:      return "xc"
-        return "outdoor"
-
-    performances = []
-    events_set = set()
-    current_year = None
-    current_season = "outdoor"
-
-    for table in soup.find_all("table"):
-        meet_date_str = ""
-        for row in table.find_all("tr"):
-            cells = [td.get_text(" ", strip=True) for td in row.find_all(["td", "th"])]
-            if not cells:
-                continue
-
-            # Detect year and season from date strings in any cell
-            for cell in cells:
-                yr = re.search(r"\b(20(?:1[5-9]|2[0-9]))\b", cell)
-                if yr:
-                    current_year = int(yr.group(1))
-                # If this cell has a month name it's a date — use it for season
-                if re.search(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)', cell, re.I):
-                    current_season = infer_season(cell)
-
-            if len(cells) < 2:
-                continue
-
-            for i, cell in enumerate(cells):
-                event_norm = EVENT_MAP.get(cell.strip())
-                if event_norm and i + 1 < len(cells):
-                    mark_raw = cells[i + 1].strip()
-                    mark_num = parse_mark(mark_raw)
-                    if mark_num and 0 < mark_num < 100000:
-                        meet = cells[i + 2].strip() if i + 2 < len(cells) else ""
-                        performances.append({
-                            "event": event_norm,
-                            "mark": mark_num,
-                            "mark_display": mark_raw,
-                            "year": current_year,
-                            "season": current_season,
-                            "level": "college",
-                            "meet_name": meet[:100],
-                        })
-                        events_set.add(event_norm)
-
-    # Skip field-event-only athletes ────────────────────────────────────────
-    # If every event the athlete has is a field event, they're not relevant.
-    # Athletes with zero performances also get skipped here.
-    # We still save a minimal record so future runs don't re-visit them.
-    if not events_set or events_set.issubset(FIELD_EVENTS):
-        log.info(f"    SKIP (field-only or no perfs): {name}")
+        log.info(f"    hometown={hometown!r}, state={hometown_state!r}, HS={high_school!r}, {len(performances)} perfs")
         return {
-            "id": f"tfrrs_{tfrrs_id}",
-            "name": name,
-            "source": "tfrrs",
-            "source_id": tfrrs_id,
-            "college": college,
-            "conference": info.get("conference", ""),
             "hometown": hometown,
             "hometown_state": hometown_state,
-            "hs_grad_year": hs_grad_year,
-            "college_year": college_year,
-            "gender": info.get("gender", "M"),
-            "events": [],
-            "tfrrs_url": url,
-            "updated_at": datetime.utcnow().isoformat(),
-            "field_only": True,
-            "performances": [],
+            "high_school": high_school,
+            "performances": performances,
+            "anet_url": url,
         }
 
-    log.info(f"    {name} ({info.get('gender','')}) Y{college_year or '?'} HS:{hs_grad_year or '?'} — {len(performances)} perfs")
-
-    return {
-        "id": f"tfrrs_{tfrrs_id}",
-        "name": name,
-        "source": "tfrrs",
-        "source_id": tfrrs_id,
-        "college": college,
-        "conference": info.get("conference", ""),
-        "hometown": hometown,
-        "hometown_state": hometown_state,
-        "hs_grad_year": hs_grad_year,
-        "college_year": college_year,
-        "gender": info.get("gender", "M"),
-        "events": list(events_set),
-        "tfrrs_url": url,
-        "updated_at": datetime.utcnow().isoformat(),
-        "performances": performances,
-    }
+    except PlaywrightTimeout:
+        log.warning(f"  [Profile] Timeout: {url}")
+        return None
+    except Exception as e:
+        log.error(f"  [Profile] Error {url}: {e}")
+        return None
 
 
-# ── SUPABASE WRITER ───────────────────────────────────────────────────────────
-def save_athlete(data: dict) -> tuple[bool, bool]:
-    """Returns (saved_ok, is_field_only)"""
-    performances = data.pop("performances", [])
-    field_only = data.pop("field_only", False)
+# ── FIND BEST MATCH ───────────────────────────────────────────────────────────
+def find_best_match(page, name: str, hs_grad_year: int | None) -> dict | None:
+    urls = search_athlete(page, name, hs_grad_year)
+    if not urls:
+        return None
+    for url in urls[:3]:
+        time.sleep(RATE_LIMIT)
+        profile = scrape_profile(page, url, name)
+        if profile:
+            return profile
+    return None
+
+
+# ── SUPABASE SAVE ─────────────────────────────────────────────────────────────
+def backfill_athlete(page, athlete_row: dict) -> bool:
+    athlete_id = athlete_row["id"]
+    name = athlete_row["name"]
+    hs_grad_year = athlete_row.get("hs_grad_year")
+
+    log.info(f"  Searching: {name} (HS {hs_grad_year or '?'})")
+
+    time.sleep(RATE_LIMIT)
+    profile = find_best_match(page, name, hs_grad_year)
+    if not profile:
+        log.info(f"    ✗ No match: {name}")
+        return False
+
+    log.info(f"    ✓ Matched: {name}")
+
+    update_data = {"updated_at": datetime.utcnow().isoformat()}
+    if profile["hometown"]:
+        update_data["hometown"] = profile["hometown"]
+    if profile["hometown_state"]:
+        update_data["hometown_state"] = profile["hometown_state"]
+    if profile["high_school"]:
+        update_data["high_school"] = profile["high_school"]
+
     try:
-        supabase.table("athletes").upsert(data, on_conflict="id").execute()
-        if not field_only and performances:
-            supabase.table("performances").delete().eq("athlete_id", data["id"]).execute()
-            rows = [
-                {**p, "athlete_id": data["id"], "source": "tfrrs"}
-                for p in performances
+        supabase.table("athletes").update(update_data).eq("id", athlete_id).execute()
+
+        if profile["performances"]:
+            hs_rows = [
+                {**p, "athlete_id": athlete_id, "source": "athletic_net"}
+                for p in profile["performances"]
                 if p.get("mark") and p.get("event")
             ]
-            for i in range(0, len(rows), 50):
-                supabase.table("performances").insert(rows[i:i+50]).execute()
-        if not field_only:
-            log.info(f"    ✓ Saved: {data['name']}")
-        return True, field_only
-    except Exception as e:
-        log.error(f"    ✗ Supabase error for {data.get('name')}: {e}")
-        return False, field_only
+            if hs_rows:
+                supabase.table("performances")\
+                    .delete()\
+                    .eq("athlete_id", athlete_id)\
+                    .eq("source", "athletic_net")\
+                    .execute()
+                for i in range(0, len(hs_rows), 50):
+                    supabase.table("performances").insert(hs_rows[i:i+50]).execute()
 
-
-def get_scraped_ids() -> set:
-    """Returns set of source_ids that were scraped within the last hour.
-    Only skips athletes to prevent duplicate work between parallel groups in the same run."""
-    try:
-        from datetime import timezone, timedelta
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        ids = set()
-        page = 0
-        PAGE = 1000
-        while True:
-            result = supabase.table("athletes") \
-                .select("source_id") \
-                .eq("source", "tfrrs") \
-                .gt("updated_at", cutoff) \
-                .range(page * PAGE, page * PAGE + PAGE - 1) \
-                .execute()
-            batch = result.data or []
-            ids.update(r["source_id"] for r in batch)
-            if len(batch) < PAGE:
-                break
-            page += 1
-        log.info(f"Athletes scraped in last 1h: {len(ids)} — skipping these, re-scraping the rest")
-        return ids
+        return True
     except Exception as e:
-        log.error(f"Could not load existing IDs: {e}")
-        return set()
+        log.error(f"    Supabase error for {name}: {e}")
+        return False
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def run_scraper(group: str = "all"):
+def run(group: str = "all", limit: int = 99999, process_all: bool = False):
     log.info("=" * 60)
-    log.info(f"Run Stats TFRRS Scraper v3 — Group: {group}")
+    log.info(f"Athletic.net Backfill v4 (Playwright) — Group: {group}, Limit: {limit}")
     log.info("=" * 60)
+
+    try:
+        result = supabase.table("athletes").select(
+            "id, name, college, conference, hs_grad_year, college_year, hometown"
+        ).eq("source", "tfrrs").execute()
+        all_athletes = result.data or []
+    except Exception as e:
+        log.error(f"Failed to fetch athletes: {e}")
+        return
 
     if group != "all" and group in CONFERENCE_GROUPS:
         target_confs = set(CONFERENCE_GROUPS[group])
-        teams_to_scrape = {
-            school: info for school, info in TEAMS.items()
-            if info[2] in target_confs
-        }
         log.info(f"Group {group} conferences: {target_confs}")
-        log.info(f"Schools to scrape: {len(teams_to_scrape)}")
+        athletes = [a for a in all_athletes if a.get("conference") in target_confs]
     else:
-        teams_to_scrape = TEAMS
-        log.info(f"Scraping ALL {len(teams_to_scrape)} schools")
+        athletes = all_athletes
 
-    already_done = get_scraped_ids()
-    log.info(f"Athletes scraped in last 1h: {len(already_done)} — skipping these, re-scraping the rest")
+    to_process = athletes if process_all else [a for a in athletes if not a.get("hometown")]
+    log.info(f"Athletes to process: {len(to_process)} / {len(athletes)}")
 
-    saved = skipped = errors = field_only = found_teams = missing_teams = 0
+    saved = errors = 0
 
-    for school, (state, slug, conference) in teams_to_scrape.items():
-        for gender_code, gender_label in GENDERS:
-            url = f"{BASE_URL}/teams/tf/{state}_college_{gender_code}_{slug}.html"
-            log.info(f"Fetching: {school} {gender_label} → {url}")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+            ]
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 800},
+            locale="en-US",
+        )
+        # Hide webdriver flag
+        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        page = context.new_page()
 
-            time.sleep(RATE_LIMIT_SECONDS)
-            try:
-                resp = requests.get(url, headers=HEADERS, timeout=20)
-            except Exception as e:
-                log.error(f"  Request failed: {e}")
-                missing_teams += 1
-                continue
+        # Warm up: visit homepage first so we have cookies/session
+        log.info("  Warming up browser on athletic.net...")
+        try:
+            page.goto("https://www.athletic.net", wait_until="domcontentloaded", timeout=20000)
+            time.sleep(2)
+            page.screenshot(path="/tmp/search_debug_warmup.png")
+            log.info(f"  Warmup page title: {page.title()!r}")
+        except Exception as e:
+            log.warning(f"  Warmup failed: {e}")
 
-            if resp.status_code == 404:
-                log.warning(f"  404 — slug may differ for {school} {gender_label}")
-                missing_teams += 1
-                continue
-            elif resp.status_code != 200:
-                log.warning(f"  HTTP {resp.status_code} for {school} {gender_label}")
-                missing_teams += 1
-                continue
+        for i, athlete in enumerate(to_process[:limit]):
+            if i > 0 and i % 25 == 0:
+                log.info(f"Progress: {i}/{min(len(to_process), limit)} — {saved} saved, {errors} errors")
+            if backfill_athlete(page, athlete):
+                saved += 1
+            else:
+                errors += 1
 
-            found_teams += 1
-            soup = BeautifulSoup(resp.text, "lxml")
-
-            SEASON_YEAR = 2026
-            athlete_links = []
-            seen_urls = set()
-            for link in soup.find_all("a", href=re.compile(r"/athletes/\d+")):
-                href = link.get("href", "")
-                name_raw = link.get_text(strip=True)
-                if not name_raw or len(name_raw) < 3:
-                    continue
-                full_url = href if href.startswith("http") else BASE_URL + href
-                if full_url not in seen_urls:
-                    seen_urls.add(full_url)
-
-                    name_clean = re.sub(r'\s*\([^)]+\)\s*$', '', name_raw).strip()
-                    name_clean = " ".join(w.capitalize() for w in name_clean.split())
-
-                    college_year = None
-                    hs_grad_year = None
-
-                    row = link.find_parent("tr")
-                    row_text = row.get_text(" ", strip=True) if row else name_raw
-
-                    class_match = re.search(
-                        r'\b(?:SR|JR|SO|FR|Grad|5th|6th)-(\d)\b'
-                        r'|\((?:SR|JR|SO|FR|Grad|RS)[^\)]*-(\d)\)',
-                        row_text, re.IGNORECASE
-                    )
-                    if class_match:
-                        digit = class_match.group(1) or class_match.group(2)
-                        college_year = int(digit)
-                    else:
-                        fallback = re.search(r'\(([1-6])\)', row_text)
-                        if fallback:
-                            college_year = int(fallback.group(1))
-
-                    if college_year and 1 <= college_year <= 6:
-                        hs_grad_year = SEASON_YEAR - college_year
-
-                    athlete_links.append({
-                        "url": full_url,
-                        "name": name_clean,
-                        "college": school,
-                        "conference": conference,
-                        "gender": "M" if gender_code == "m" else "F",
-                        "college_year": college_year,
-                        "hs_grad_year": hs_grad_year,
-                    })
-
-            log.info(f"  Found {len(athlete_links)} {gender_label} athletes at {school}")
-
-            for info in athlete_links:
-                id_match = re.search(r"/athletes/(\d+)", info["url"])
-                if id_match and id_match.group(1) in already_done:
-                    skipped += 1
-                    continue
-
-                data = scrape_athlete(info)
-                if data:
-                    ok, is_field_only = save_athlete(data)
-                    if ok:
-                        already_done.add(data["source_id"])
-                        if is_field_only:
-                            field_only += 1
-                        else:
-                            saved += 1
-                    else:
-                        errors += 1
-                else:
-                    errors += 1
+        browser.close()
 
     log.info("=" * 60)
-    log.info(f"Teams found: {found_teams} | Teams 404'd: {missing_teams}")
-    log.info(f"Athletes: {saved} saved | {skipped} skipped | {field_only} field-only skipped | {errors} errors")
+    log.info(f"Done: {saved} updated, {errors} not found/errors")
     log.info("=" * 60)
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="TFRRS Scraper")
-    parser.add_argument(
-        "--group", default="all",
-        help="Conference group: 1-6 or 'all'. "
-             "1=SEC+WCC, 2=BigTen+BigSky, 3=ACC+Ivy, "
-             "4=Big12+A10, 5=Pac12+American, 6=MWC+BigEast"
-    )
+    parser = argparse.ArgumentParser(description="Athletic.net backfill scraper v4 (Playwright)")
+    parser.add_argument("--group", default="all", help="Conference group 1-6 or 'all'")
+    parser.add_argument("--limit", type=int, default=99999, help="Max athletes to process")
+    parser.add_argument("--all", action="store_true", dest="process_all",
+                        help="Re-process all athletes, not just those missing hometown")
     args = parser.parse_args()
-    run_scraper(group=args.group)
+    run(group=args.group, limit=args.limit, process_all=args.process_all)
