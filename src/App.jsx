@@ -279,12 +279,14 @@ const distColor = d => !d ? T.dim : d<100?DIST_COLORS.local:d<400?DIST_COLORS.re
 const distLabel = d => !d ? "Unknown" : d<100?"Local (<100 mi)":d<400?"Regional (100-400 mi)":d<800?"Long Haul (400-800 mi)":"Cross-Country (800+ mi)";
 
 // ── HEATMAP CANVAS ────────────────────────────────────────────────────────────
-function drawHeatmap(canvas, athletes, projection) {
+function drawHeatmap(canvas, athletes, projection, mode="home") {
   if (!canvas || !projection || athletes.length === 0) return;
   const W = canvas.width, H = canvas.height;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, W, H);
-  const pts = athletes.filter(a=>a.hometownCoords).map(a => projection([a.hometownCoords[1], a.hometownCoords[0]])).filter(Boolean);
+  const pts = mode === "college"
+    ? athletes.map(a => projection([a.collegeCoords[1], a.collegeCoords[0]])).filter(Boolean)
+    : athletes.filter(a=>a.hometownCoords).map(a => projection([a.hometownCoords[1], a.hometownCoords[0]])).filter(Boolean);
   if (!pts.length) return;
   const R = 14, bw = R / 2.8;
   const density = new Float32Array(W * H);
@@ -358,7 +360,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
       .attr("stroke-width",d=>{ const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")]; return hasStateFilter&&selectedStates.includes(abbr)?2:0.8; })
       .style("cursor","default");
 
-    if (mapMode === "heatmap") return;
+    if (mapMode.startsWith("heatmap")) return;
 
     try {
     const stateFiltered = (hasStateFilter && mapMode==="flows")
@@ -372,15 +374,17 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     if (mapMode === "flows") {
       dimmed.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
-        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.55;
-        g.append("path").attr("d",`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`).attr("fill","none").attr("stroke","rgba(0,0,0,0.04)").attr("stroke-width",0.8);
+        const dx=c[0]-h[0],dy=c[1]-h[1],dist_px=Math.sqrt(dx*dx+dy*dy);
+        const mx=(h[0]+c[0])/2, my=(h[1]+c[1])/2;
+        g.append("path").attr("d",`M${h[0]},${h[1]} Q${mx},${my-dist_px*0.35} ${c[0]},${c[1]}`).attr("fill","none").attr("stroke","rgba(0,0,0,0.04)").attr("stroke-width",0.8);
       });
       active.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
         if(!a.hometownCoords) return;
         const dist=haversine(a.hometownCoords,a.collegeCoords), col=distColor(dist), isSel=selectedAthlete?.id===a.id;
-        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.55;
-        const arc=`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`;
+        const dx=c[0]-h[0],dy=c[1]-h[1],dist_px=Math.sqrt(dx*dx+dy*dy);
+        const mx=(h[0]+c[0])/2, my=(h[1]+c[1])/2;
+        const arc=`M${h[0]},${h[1]} Q${mx},${my-dist_px*0.35} ${c[0]},${c[1]}`;
         if (isSel) g.append("path").attr("d",arc).attr("fill","none").attr("stroke",`${T.orange}55`).attr("stroke-width",8);
         g.append("path").attr("d",arc).attr("fill","none").attr("stroke",isSel?T.orange:col).attr("stroke-width",isSel?2.5:1.6).attr("stroke-opacity",isSel?1:0.82).style("cursor","pointer")
           .on("mouseover",function(ev){d3.select(this).attr("stroke-width",3).attr("stroke-opacity",1);setTooltip({x:ev.offsetX,y:ev.offsetY,a,dist:Math.round(dist)});})
@@ -410,14 +414,15 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
   }, [geo,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates]);
 
   useEffect(() => {
-    if (mapMode!=="heatmap"||!canvasRef.current||!projRef.current) return;
-    drawHeatmap(canvasRef.current, athletes, projRef.current);
+    if (!mapMode.startsWith("heatmap")||!canvasRef.current||!projRef.current) return;
+    const mode = mapMode === "heatmap-college" ? "college" : "home";
+    drawHeatmap(canvasRef.current, athletes, projRef.current, mode);
   }, [mapMode, athletes, geo]);
 
   return (
     <div style={{position:"relative",width:"100%",height:"100%"}}>
       <svg ref={svgRef} style={{width:"100%",height:"100%",display:"block"}}/>
-      <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",opacity:mapMode==="heatmap"?1:0,transition:"opacity 0.3s",width:"100%",height:"100%"}}
+      <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",opacity:mapMode.startsWith("heatmap")?1:0,transition:"opacity 0.3s",width:"100%",height:"100%"}}
         width={svgRef.current?.clientWidth||960} height={svgRef.current?.clientHeight||560}/>
       {tooltip && (
         <div style={{position:"absolute",left:tooltip.x+14,top:tooltip.y-8,background:"#FFFFFF",border:`1px solid ${T.orange}`,borderRadius:9,padding:"10px 14px",pointerEvents:"none",zIndex:100,boxShadow:`0 6px 28px rgba(247,105,0,0.18)`,minWidth:180}}>
@@ -664,25 +669,31 @@ function applyFilters(athletes, filters, search="", performanceRanges={}) {
 }
 
 // ── HEATMAP PANEL ─────────────────────────────────────────────────────────────
-function HeatmapPanel({athletes}) {
+function HeatmapPanel({athletes, mapMode, onSwitchMap}) {
   const [rankTab, setRankTab] = useState("cities");
+  const isCollege = mapMode === "heatmap-college";
 
   const topCities = useMemo(() => {
     const map={};
-    athletes.forEach(a=>{if(!a.hometown||!a.hometownCoords)return;if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
+    if (isCollege) {
+      athletes.forEach(a=>{if(!a.college)return;if(!map[a.college])map[a.college]={city:a.college,count:0};map[a.college].count++;});
+    } else {
+      athletes.forEach(a=>{if(!a.hometown||!a.hometownCoords)return;if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
+    }
     return Object.values(map).sort((a,b)=>b.count-a.count).slice(0,15);
-  }, [athletes]);
+  }, [athletes, isCollege]);
 
   const topStates = useMemo(() => {
     const map={};
     athletes.forEach(a=>{
-      if(!a.hometown||!a.hometownCoords)return;
-      const st=getState(a.hometown); if(!st) return;
+      const ht = isCollege ? a.hometown : a.hometown; // both use hometown for state breakdown
+      if(!ht||(!isCollege&&!a.hometownCoords))return;
+      const st=getState(ht); if(!st) return;
       if(!map[st]) map[st]={abbr:st,name:STATE_NAMES[st]||st,count:0,cities:new Set()};
-      map[st].count++; map[st].cities.add(a.hometown);
+      map[st].count++; map[st].cities.add(isCollege?a.college:ht);
     });
     return Object.values(map).map(s=>({...s,cityCount:s.cities.size})).sort((a,b)=>b.count-a.count).slice(0,15);
-  }, [athletes]);
+  }, [athletes, isCollege]);
 
   const uniqueStateCount = useMemo(() => {
     const s=new Set(); athletes.forEach(a=>{const st=getState(a.hometown);if(st)s.add(st);}); return s.size;
@@ -690,16 +701,22 @@ function HeatmapPanel({athletes}) {
 
   return (
     <div style={{padding:"14px",height:"100%",overflowY:"auto"}}>
+      {/* Home / College toggle */}
+      <div style={{display:"flex",background:T.bgCard,borderRadius:7,border:`1px solid ${T.border}`,overflow:"hidden",marginBottom:12}}>
+        {[["heatmap-home","Home Density"],["heatmap-college","College Density"]].map(([m,l])=>(
+          <button key={m} onClick={()=>onSwitchMap(m)} style={{flex:1,padding:"7px 6px",background:mapMode===m?T.orange:"transparent",border:"none",color:mapMode===m?T.white:T.muted,fontSize:11,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.15s",fontWeight:mapMode===m?700:400}}>{l}</button>
+        ))}
+      </div>
       <div style={{marginBottom:12}}>
-        <div style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,letterSpacing:2,textTransform:"uppercase",marginBottom:6}}>Hometown Density Map</div>
+        <div style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,letterSpacing:2,textTransform:"uppercase",marginBottom:6}}>{isCollege?"College Concentration":"Hometown Density"}</div>
         <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:10}}>
           <div style={{color:T.muted,fontSize:11,lineHeight:1.6}}>
-            The heatmap reflects your <span style={{color:T.orange,fontWeight:700}}>active filters</span> in the left panel.
+            {isCollege?"Shows where athletes play college ball.":"Shows where recruited athletes come from."} Reflects your <span style={{color:T.orange,fontWeight:700}}>active filters</span>.
           </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
           <StatCard label="Athletes" value={athletes.length} color={T.orange}/>
-          <StatCard label="Cities" value={topCities.length} color={T.blueL}/>
+          <StatCard label={isCollege?"Colleges":"Cities"} value={topCities.length} color={T.blueL}/>
           <StatCard label="States" value={uniqueStateCount} color={T.blueM}/>
         </div>
       </div>
@@ -714,14 +731,14 @@ function HeatmapPanel({athletes}) {
         </div>
       </div>
       <div style={{display:"flex",background:T.bg,borderRadius:7,border:`1px solid ${T.border}`,overflow:"hidden",marginBottom:12}}>
-        {[["cities","Top Cities"],["states","Top States"]].map(([tab,lbl])=>(
+        {[[isCollege?"colleges":"cities",isCollege?"Top Colleges":"Top Cities"],["states","Top States"]].map(([tab,lbl])=>(
           <button key={tab} onClick={()=>setRankTab(tab)} style={{flex:1,padding:"7px 6px",background:rankTab===tab?T.orange:"transparent",border:"none",color:rankTab===tab?T.white:T.muted,fontSize:11,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.15s",fontWeight:rankTab===tab?700:400}}>{lbl}</button>
         ))}
       </div>
-      {rankTab === "cities" && (
+      {(rankTab === "cities" || rankTab === "colleges") && (
         <>
           <div style={{display:"grid",gridTemplateColumns:"auto 1fr auto",gap:"0 10px",marginBottom:4,paddingBottom:5,borderBottom:`1px solid ${T.border}`}}>
-            {["#","City","Athletes"].map(h=><span key={h} style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",textAlign:h==="Athletes"?"right":"left"}}>{h}</span>)}
+            {["#",isCollege?"College":"City","Athletes"].map(h=><span key={h} style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",textAlign:h==="Athletes"?"right":"left"}}>{h}</span>)}
           </div>
           {topCities.length===0 ? <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>No athletes match current filters</div>
           : topCities.map((c,i)=>(
@@ -1351,8 +1368,8 @@ export default function App() {
   const handleAthleteClick = a => { setSelectedAthlete(s=>s?.id===a.id?null:a); setRightTab("athlete"); };
   const handleFocusCollege = c => { setFocusedCollege(c); if (c) setFocusedHometown(""); };
   const handleFocusHometown = h => { setFocusedHometown(h); if (h) setFocusedCollege(""); };
-  const switchMapMode = m => { setMapMode(m); if (m==="heatmap") setRightTab("heatmap"); if (m!=="flows") setSelectedStates([]); };
-  const switchRightTab = t => { setRightTab(t); if (t==="heatmap") setMapMode("heatmap"); else if (mapMode==="heatmap") setMapMode("flows"); };
+  const switchMapMode = m => { setMapMode(m); if (m.startsWith("heatmap")) setRightTab("heatmap"); if (m!=="flows") setSelectedStates([]); };
+  const switchRightTab = t => { setRightTab(t); if (t==="heatmap") setMapMode(m => m.startsWith("heatmap") ? m : "heatmap-home"); else if (mapMode.startsWith("heatmap")) setMapMode("flows"); };
 
   const highlightCollege = rightTab==="college" ? focusedCollege : "";
   const highlightHometown = rightTab==="hometown" ? focusedHometown : "";
@@ -1377,7 +1394,7 @@ export default function App() {
             style={{flex:1,maxWidth:300,background:"#F7F7F8",border:`1px solid ${T.border}`,borderRadius:7,padding:"6px 12px",color:T.offWhite,fontSize:12,fontFamily:"'Barlow',sans-serif",outline:"none"}}/>
 
           <div style={{display:"flex",background:T.bgCard,borderRadius:7,border:`1px solid ${T.border}`,overflow:"hidden"}}>
-            {[["flows","Flows"],["hometown","Home"],["college","College"],["heatmap","Heat"]].map(([m,l])=>(
+            {[["flows","Flows"],["heatmap-home","Home"],["heatmap-college","College"]].map(([m,l])=>(
               <button key={m} onClick={()=>switchMapMode(m)} style={{background:mapMode===m?T.orange:"transparent",border:"none",color:mapMode===m?T.white:T.muted,padding:"6px 14px",fontSize:13,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.15s",fontWeight:mapMode===m?700:400}}>{l}</button>
             ))}
           </div>
@@ -1469,9 +1486,9 @@ export default function App() {
             )}
 
             <div style={{position:"absolute",bottom:14,left:14,background:"rgba(255,255,255,0.96)",border:`1px solid ${T.border}`,borderRadius:9,padding:"9px 13px",boxShadow:`0 2px 16px rgba(0,0,0,0.10)`}}>
-              {mapMode==="heatmap" ? (
+              {mapMode.startsWith("heatmap") ? (
                 <div>
-                  <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Hometown Density</div>
+                  <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>{mapMode==="heatmap-college"?"College":"Hometown"} Density</div>
                   <div style={{display:"flex",gap:3,alignItems:"center",marginBottom:4}}>
                     {["#0000C8","#00B4DC","#00D250","#FFE600","#FF7800","#FF0000"].map((c,i)=><div key={i} style={{width:22,height:7,background:c,borderRadius:1}}/>)}
                   </div>
@@ -1495,7 +1512,6 @@ export default function App() {
                 <div style={{display:"flex",gap:12,alignItems:"center"}}>
                   <div style={{display:"flex",gap:5,alignItems:"center"}}><div style={{width:8,height:8,borderRadius:"50%",background:T.orangeL}}/><span style={{color:T.muted,fontSize:10}}>Athlete</span></div>
                   <div style={{display:"flex",gap:5,alignItems:"center"}}><div style={{width:10,height:10,borderRadius:"50%",background:T.orange,border:`2px solid ${T.white}`}}/><span style={{color:T.muted,fontSize:10}}>Selected</span></div>
-                  <span style={{color:T.dim,fontSize:10}}>{mapMode==="college"?"College":"Hometown"} view</span>
                 </div>
               )}
             </div>
@@ -1517,7 +1533,7 @@ export default function App() {
                 {rightTab==="athlete"  && <AthleteDetail athlete={selectedAthlete} onClose={()=>setSelectedAthlete(null)} allAthletes={athletes}/>}
                 {rightTab==="college"  && <CollegePullPanel athletes={filtered} focusedCollege={focusedCollege} onFocusCollege={handleFocusCollege}/>}
                 {rightTab==="hometown" && <HometownPanel athletes={filtered} focusedHometown={focusedHometown} onFocusHometown={handleFocusHometown}/>}
-                {rightTab==="heatmap"  && <HeatmapPanel athletes={filtered}/>}
+                {rightTab==="heatmap"  && <HeatmapPanel athletes={filtered} mapMode={mapMode} onSwitchMap={switchMapMode}/>}
               </div>
             )}
           </div>
