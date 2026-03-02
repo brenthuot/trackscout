@@ -407,8 +407,8 @@ function drawHeatmap(canvas, athletes, projection) {
 
 // ── US MAP ────────────────────────────────────────────────────────────────────
 function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, highlightHometown, mapMode, selectedStates}) {
-  const svgRef=useRef(null), canvasRef=useRef(null), projRef=useRef(null), containerRef=useRef(null);
-  const [geo,setGeo]=useState(null), [tooltip,setTooltip]=useState(null), [dims,setDims]=useState({W:960,H:560});
+  const svgRef=useRef(null), canvasRef=useRef(null), projRef=useRef(null);
+  const [geo,setGeo]=useState(null), [tooltip,setTooltip]=useState(null);
   const FIPS_ABBR={"01":"AL","02":"AK","04":"AZ","05":"AR","06":"CA","08":"CO","09":"CT","10":"DE","11":"DC","12":"FL","13":"GA","15":"HI","16":"ID","17":"IL","18":"IN","19":"IA","20":"KS","21":"KY","22":"LA","23":"ME","24":"MD","25":"MA","26":"MI","27":"MN","28":"MS","29":"MO","30":"MT","31":"NE","32":"NV","33":"NH","34":"NJ","35":"NM","36":"NY","37":"NC","38":"ND","39":"OH","40":"OK","41":"OR","42":"PA","44":"RI","45":"SC","46":"SD","47":"TN","48":"TX","49":"UT","50":"VT","51":"VA","53":"WA","54":"WV","55":"WI","56":"WY"};
 
   useEffect(() => {
@@ -417,19 +417,6 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const sc=document.createElement("script"); sc.src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"; sc.onload=()=>load(window.topojson); document.head.appendChild(sc);
   }, []);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const ro = new ResizeObserver(entries => {
-      for (const e of entries) {
-        const W=Math.round(e.contentRect.width), H=Math.round(e.contentRect.height);
-        if (W>50 && H>50) {
-          setDims({W, H});
-          if (canvasRef.current) { canvasRef.current.width=W; canvasRef.current.height=H; }
-        }
-      }
-    });
-    ro.observe(containerRef.current);
-    return () => ro.disconnect();
   }, []);
 
   useEffect(() => {
@@ -530,34 +517,31 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
       });
     }
     } catch(e) { console.error("Map render error:", e.message, e.stack); }
-  }, [geo,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates,dims]);
+  }, [geo,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates]);
 
   useEffect(() => {
     try {
-      if (!canvasRef.current) return;
-      const ctx = canvasRef.current.getContext("2d");
-      if (!ctx) return;
+      if (!canvasRef.current || !svgRef.current) return;
       if (mapMode !== "heatmap" || !projRef.current) {
-        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        const ctx = canvasRef.current.getContext("2d");
+        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
         return;
       }
-      // Sync canvas pixel dims to actual display size before drawing
-      const rect = canvasRef.current.getBoundingClientRect();
-      if (rect.width > 50 && rect.height > 50) {
-        canvasRef.current.width = Math.round(rect.width);
-        canvasRef.current.height = Math.round(rect.height);
-      }
+      // Sync canvas pixel dimensions to SVG layout size (SVG is block-positioned so it always has correct dims)
+      const W = svgRef.current.clientWidth || 960;
+      const H = svgRef.current.clientHeight || 560;
+      canvasRef.current.width = W;
+      canvasRef.current.height = H;
       drawHeatmap(canvasRef.current, athletes, projRef.current);
     } catch(e) {
-      console.error("Heatmap useEffect error:", e);
+      console.error("Heatmap effect error:", e);
     }
-  }, [mapMode, athletes, geo, dims]);
+  }, [mapMode, athletes, geo]);
 
   return (
-    <div ref={containerRef} style={{position:"relative",width:"100%",height:"100%"}}>
-      <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",opacity:mapMode==="heatmap"?1:0,transition:"opacity 0.3s",width:"100%",height:"100%"}}
-        width={dims.W} height={dims.H}/>
-      <svg ref={svgRef} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"block"}}/>
+    <div style={{position:"relative",width:"100%",height:"100%"}}>
+      <svg ref={svgRef} style={{width:"100%",height:"100%",display:"block"}}/>
+      <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",opacity:mapMode==="heatmap"?1:0,transition:"opacity 0.3s",width:"100%",height:"100%"}}/>
       {tooltip && (
         <div style={{position:"absolute",left:tooltip.x+14,top:tooltip.y-8,background:"#FFFFFF",border:`1px solid ${T.orange}`,borderRadius:9,padding:"10px 14px",pointerEvents:"none",zIndex:100,boxShadow:`0 6px 28px rgba(247,105,0,0.18)`,minWidth:180}}>
           <div style={{color:T.orange,fontWeight:800,fontSize:14,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{tooltip.a.name}</div>
