@@ -1,141 +1,3 @@
-// ── CITY COORDINATES (real coords for distance accuracy) ─────────────────────
-const CITY_COORDS = {
-  "New York, NY":[40.712,-74.006],"Los Angeles, CA":[34.052,-118.244],"Chicago, IL":[41.878,-87.630],
-  "Houston, TX":[29.760,-95.370],"Phoenix, AZ":[33.448,-112.074],"Philadelphia, PA":[39.953,-75.163],
-  "San Antonio, TX":[29.424,-98.494],"San Diego, CA":[32.716,-117.161],"Dallas, TX":[32.780,-96.801],
-  "San Jose, CA":[37.338,-121.886],"Austin, TX":[30.267,-97.743],"Jacksonville, FL":[30.332,-81.656],
-  "Columbus, OH":[39.961,-82.999],"Charlotte, NC":[35.227,-80.843],"Indianapolis, IN":[39.768,-86.158],
-  "San Francisco, CA":[37.773,-122.432],"Seattle, WA":[47.608,-122.335],"Denver, CO":[39.739,-104.984],
-  "Nashville, TN":[36.165,-86.784],"Oklahoma City, OK":[35.467,-97.516],"El Paso, TX":[31.761,-106.487],
-  "Las Vegas, NV":[36.175,-115.136],"Louisville, KY":[38.253,-85.759],"Baltimore, MD":[39.291,-76.609],
-  "Milwaukee, WI":[43.049,-87.907],"Albuquerque, NM":[35.085,-106.651],"Tucson, AZ":[32.222,-110.975],
-  "Fresno, CA":[36.737,-119.787],"Sacramento, CA":[38.576,-121.487],"Kansas City, MO":[39.098,-94.582],
-  "Atlanta, GA":[33.749,-84.388],"Omaha, NE":[41.257,-95.934],"Raleigh, NC":[35.787,-78.644],
-  "Colorado Springs, CO":[38.834,-104.821],"Long Beach, CA":[33.770,-118.194],
-  "Minneapolis, MN":[44.980,-93.265],"Tampa, FL":[27.948,-82.457],"New Orleans, LA":[29.950,-90.066],
-  "Wichita, KS":[37.697,-97.316],"Arlington, TX":[32.736,-97.108],"Lexington, KY":[38.045,-84.497],
-  "St. Louis, MO":[38.627,-90.199],"Pittsburgh, PA":[40.440,-79.996],"Cincinnati, OH":[39.103,-84.512],
-  "Greensboro, NC":[36.073,-79.792],"Lincoln, NE":[40.813,-96.702],"Buffalo, NY":[42.887,-78.879],
-  "Fort Wayne, IN":[41.130,-85.128],"Orlando, FL":[28.538,-81.380],"Madison, WI":[43.073,-89.401],
-  "Durham, NC":[35.994,-78.899],"Lubbock, TX":[33.578,-101.855],"Reno, NV":[39.530,-119.814],
-  "Baton Rouge, LA":[30.458,-91.154],"Richmond, VA":[37.541,-77.433],"Des Moines, IA":[41.600,-93.609],
-  "Montgomery, AL":[32.361,-86.279],"Shreveport, LA":[32.526,-93.750],"Akron, OH":[41.081,-81.519],
-  "Little Rock, AR":[34.736,-92.331],"Augusta, GA":[33.471,-82.011],"Grand Rapids, MI":[42.963,-85.668],
-  "Knoxville, TN":[35.961,-83.921],"Salt Lake City, UT":[40.760,-111.891],"Huntsville, AL":[34.730,-86.586],
-  "Worcester, MA":[42.263,-71.803],"Providence, RI":[41.824,-71.413],"Dayton, OH":[39.758,-84.192],
-  "Lansing, MI":[42.733,-84.556],"Hartford, CT":[41.763,-72.685],"Birmingham, AL":[33.521,-86.803],
-  "Rochester, NY":[43.157,-77.616],"Columbia, SC":[34.000,-81.035],"Savannah, GA":[32.081,-81.099],
-  "Chattanooga, TN":[35.046,-85.311],"Syracuse, NY":[43.048,-76.148],"Columbia, MO":[38.952,-92.333],
-  "Gainesville, FL":[29.652,-82.325],"Boise, ID":[43.615,-116.202],"Tallahassee, FL":[30.455,-84.253],
-  "Waco, TX":[31.549,-97.147],"Cedar Rapids, IA":[41.979,-91.662],"South Bend, IN":[41.684,-86.252],
-  "Norman, OK":[35.222,-97.439],"Provo, UT":[40.234,-111.659],"Springfield, MO":[37.216,-93.292],
-  "Jackson, MS":[32.298,-90.184],"Fort Collins, CO":[40.585,-105.084],"Sioux Falls, SD":[43.549,-96.700],
-  "Boston, MA":[42.360,-71.058],"Portland, ME":[43.658,-70.259],"Portland, OR":[45.523,-122.676],
-  "Memphis, TN":[35.149,-90.048],"Louisville, KY":[38.253,-85.759],"Miami, FL":[25.775,-80.209],
-  "Detroit, MI":[42.331,-83.046],"Cleveland, OH":[41.499,-81.695],"Minneapolis, MN":[44.980,-93.265],
-  "Fayetteville, NC":[35.053,-78.878],"Fayetteville, AR":[36.062,-94.158],
-  "Iowa City, IA":[41.661,-91.530],"Champaign, IL":[40.116,-88.243],"Ann Arbor, MI":[42.281,-83.743],
-  "Tuscaloosa, AL":[33.210,-87.569],"Chestnut Hill, MA":[42.337,-71.168],"Eugene, OR":[44.052,-123.087],
-  "College Station, TX":[30.628,-96.334],"Ames, IA":[42.034,-93.620],"Bloomington, IN":[39.165,-86.526],
-  "Bloomington, IL":[40.484,-88.994],"Lawrence, KS":[38.973,-95.235],"State College, PA":[40.793,-77.860],
-  "Clemson, SC":[34.683,-82.837],"Oxford, OH":[39.508,-84.746],"West Lafayette, IN":[40.428,-86.910],
-  "East Lansing, MI":[42.737,-84.484],"DeKalb, IL":[41.929,-88.750],"Normal, IL":[40.515,-88.990],
-  "Carbondale, IL":[37.727,-89.218],"Mankato, MN":[44.165,-93.999],"Duluth, MN":[46.787,-92.100],
-  "Fargo, ND":[46.877,-96.790],"Grand Forks, ND":[47.925,-97.033],"Brookings, SD":[44.312,-96.798],
-  "Kearney, NE":[40.700,-99.082],"Manhattan, KS":[39.183,-96.572],"Emporia, KS":[38.404,-96.182],
-  "Warrensburg, MO":[38.762,-93.736],"Cape Girardeau, MO":[37.306,-89.518],"Edmond, OK":[35.653,-97.478],
-  "Stillwater, OK":[36.122,-97.058],"Denton, TX":[33.215,-97.133],"San Marcos, TX":[29.883,-97.941],
-  "Nacogdoches, TX":[31.604,-94.655],"Ruston, LA":[32.523,-92.638],"Monroe, LA":[32.510,-92.120],
-  "Hammond, LA":[30.504,-90.462],"Jonesboro, AR":[35.842,-90.704],"Conway, AR":[35.089,-92.442],
-  "Florence, AL":[34.800,-87.677],"Jacksonville, AL":[33.814,-85.765],"Troy, AL":[31.810,-85.969],
-  "Tuscaloosa, AL":[33.210,-87.569],"Florence, SC":[34.195,-79.763],"Conway, SC":[33.836,-79.047],
-  "Rock Hill, SC":[34.925,-81.025],"Statesboro, GA":[32.449,-81.783],"Carrollton, GA":[33.580,-85.077],
-  "Athens, GA":[33.961,-83.378],"Valdosta, GA":[30.833,-83.278],"Albany, GA":[31.579,-84.156],
-  "Kennesaw, GA":[34.023,-84.616],"Marietta, GA":[33.953,-84.550],"Harrisonburg, VA":[38.436,-78.869],
-  "Radford, VA":[37.131,-80.576],"Charlottesville, VA":[38.030,-78.480],"Blacksburg, VA":[37.229,-80.414],
-  "Norfolk, VA":[36.851,-76.286],"Lynchburg, VA":[37.414,-79.142],"Morgantown, WV":[39.634,-79.956],
-  "Huntington, WV":[38.415,-82.445],"Charleston, WV":[38.350,-81.633],"Cambridge, MA":[42.374,-71.105],
-  "Amherst, MA":[42.375,-72.519],"Burlington, VT":[44.476,-73.212],"Princeton, NJ":[40.357,-74.668],
-  "Ithaca, NY":[42.443,-76.502],"Starkville, MS":[33.460,-88.822],"Oxford, MS":[34.366,-89.519],
-  "Pullman, WA":[46.730,-117.180],"Missoula, MT":[46.872,-113.993],"Bozeman, MT":[45.680,-111.044],
-  "Flagstaff, AZ":[35.198,-111.651],"Davis, CA":[38.544,-121.741],"Santa Barbara, CA":[34.421,-119.699],
-  "Evanston, IL":[42.048,-87.679],"Notre Dame, IN":[41.705,-86.235],"Chapel Hill, NC":[35.913,-79.055],
-  "Greenville, SC":[34.852,-82.394],"Boone, NC":[36.217,-81.675],"Wilmington, NC":[34.226,-77.946],
-  "Asheville, NC":[35.574,-82.551],"Durham, NC":[35.994,-78.899],"Spokane, WA":[47.659,-117.426],
-  "Corvallis, OR":[44.564,-123.263],"Pocatello, ID":[42.871,-112.446],"Twin Falls, ID":[42.563,-114.460],
-  "Tempe, AZ":[33.426,-111.940],"Logan, UT":[41.730,-111.834],"Ogden, UT":[41.223,-111.974],
-  "Laramie, WY":[41.312,-105.591],"Las Cruces, NM":[32.312,-106.778],"Evansville, IN":[37.972,-87.571],
-  "Fort Wayne, IN":[41.130,-85.128],"Terre Haute, IN":[39.466,-87.414],"Muncie, IN":[40.193,-85.387],
-  "Springfield, IL":[39.798,-89.644],"Peoria, IL":[40.694,-89.589],"Decatur, IL":[39.841,-88.955],
-  "Clarksville, TN":[36.530,-87.360],"Jackson, TN":[35.614,-88.814],"Bowling Green, KY":[36.990,-86.444],
-  "Owensboro, KY":[37.774,-87.113],"Covington, KY":[39.083,-84.509],"Midland, TX":[31.997,-102.078],
-  "Abilene, TX":[32.449,-99.733],"Lubbock, TX":[33.578,-101.855],"Amarillo, TX":[35.222,-101.831],
-  "El Paso, TX":[31.761,-106.487],"Laredo, TX":[27.506,-99.507],"Corpus Christi, TX":[27.800,-97.397],
-  "McAllen, TX":[26.204,-98.230],"Killeen, TX":[31.117,-97.728],"Wichita Falls, TX":[33.914,-98.494],
-  "Tyler, TX":[32.351,-95.301],"Beaumont, TX":[30.086,-94.102],"Fort Worth, TX":[32.755,-97.330],
-  "Plano, TX":[33.020,-96.700],"Garland, TX":[32.913,-96.639],"Mesquite, TX":[32.766,-96.599],
-  "Tulsa, OK":[36.154,-95.993],"Broken Arrow, OK":[36.060,-95.791],"Lawton, OK":[34.608,-98.390],
-  "Billings, MT":[45.784,-108.501],"Great Falls, MT":[47.501,-111.302],"Helena, MT":[46.596,-112.027],
-  "Cheyenne, WY":[41.140,-104.820],"Casper, WY":[42.867,-106.313],"Rapid City, SD":[44.080,-103.231],
-  "Sioux City, IA":[42.500,-96.400],"Davenport, IA":[41.524,-90.578],"Waterloo, IA":[42.497,-92.343],
-  "Springfield, MA":[42.101,-72.590],"New Haven, CT":[41.308,-72.928],"Bridgeport, CT":[41.186,-73.195],
-  "Trenton, NJ":[40.217,-74.759],"Newark, NJ":[40.736,-74.172],"Albany, NY":[42.651,-73.755],
-  "Utica, NY":[43.100,-75.232],"Binghamton, NY":[42.099,-75.917],"Scranton, PA":[41.409,-75.665],
-  "Erie, PA":[42.129,-80.085],"Harrisburg, PA":[40.265,-76.885],"Lancaster, PA":[40.038,-76.306],
-  "Allentown, PA":[40.602,-75.470],"Bethlehem, PA":[40.626,-75.370],"Altoona, PA":[40.519,-78.400],
-  "Wilmington, DE":[39.746,-75.547],"Annapolis, MD":[38.978,-76.492],"Frederick, MD":[39.414,-77.411],
-  "Alexandria, VA":[38.805,-77.047],"Arlington, VA":[38.880,-77.105],"Roanoke, VA":[37.271,-79.941],
-  "Newport News, VA":[37.101,-76.493],"Chesapeake, VA":[36.820,-76.287],"Virginia Beach, VA":[36.853,-75.978],
-  "Hampton, VA":[37.031,-76.343],"Portsmouth, VA":[36.836,-76.298],"Fredericksburg, VA":[38.304,-77.461],
-  "High Point, NC":[35.956,-80.006],"Gastonia, NC":[35.262,-81.187],"Concord, NC":[35.409,-80.580],
-  "Rocky Mount, NC":[35.939,-77.790],"Spartanburg, SC":[34.946,-81.931],"Charleston, SC":[32.784,-79.940],
-  "Myrtle Beach, SC":[33.689,-78.888],"Gainesville, GA":[34.302,-83.824],"Rome, GA":[34.257,-85.165],
-  "Columbus, GA":[32.461,-84.988],"Warner Robins, GA":[32.614,-83.600],"Pensacola, FL":[30.421,-87.217],
-  "Panama City, FL":[30.159,-85.660],"Daytona Beach, FL":[29.211,-81.023],"Fort Lauderdale, FL":[26.122,-80.143],
-  "West Palm Beach, FL":[26.715,-80.053],"Boca Raton, FL":[26.368,-80.128],"Sarasota, FL":[27.337,-82.531],
-  "Fort Myers, FL":[26.640,-81.873],"Cape Coral, FL":[26.561,-81.949],"Lakeland, FL":[28.040,-81.951],
-  "Ocala, FL":[29.188,-82.140],"Clearwater, FL":[27.966,-82.800],"Pensacola, FL":[30.421,-87.217],
-  "Mobile, AL":[30.694,-88.043],"Dothan, AL":[31.224,-85.390],"Gadsden, AL":[33.998,-86.011],
-  "Auburn, AL":[32.610,-85.480],"Hattiesburg, MS":[31.329,-89.290],"Biloxi, MS":[30.396,-88.886],
-  "Gulfport, MS":[30.367,-89.093],"Tupelo, MS":[34.259,-88.704],"Southaven, MS":[34.989,-90.014],
-  "Meridian, MS":[32.374,-88.703],"Anchorage, AK":[61.218,-149.900],"Honolulu, HI":[21.307,-157.858],
-  "Manchester, NH":[42.996,-71.455],"Nashua, NH":[42.766,-71.468],"Concord, NH":[43.208,-71.538],
-  "Bellingham, WA":[48.746,-122.476],"Yakima, WA":[46.602,-120.505],"Kennewick, WA":[46.211,-119.137],
-  "Olympia, WA":[47.042,-122.893],"Bend, OR":[44.058,-121.315],"Medford, OR":[42.327,-122.875],
-  "Salem, OR":[44.942,-123.030],"Rexburg, ID":[43.826,-111.790],"Nampa, ID":[43.541,-116.567],
-  "Idaho Falls, ID":[43.492,-112.034],"Caldwell, ID":[43.663,-116.688],"Lewiston, ID":[46.416,-117.018],
-  "Henderson, NV":[36.040,-114.982],"Carson City, NV":[39.164,-119.767],"Sparks, NV":[39.534,-119.752],
-  "St. George, UT":[37.105,-113.584],"Cedar City, UT":[37.677,-113.061],"West Valley City, UT":[40.689,-112.001],
-  "Yuma, AZ":[32.693,-114.628],"Scottsdale, AZ":[33.494,-111.926],"Mesa, AZ":[33.415,-111.831],
-  "Chandler, AZ":[33.303,-111.841],"Gilbert, AZ":[33.353,-111.789],"Peoria, AZ":[33.581,-112.237],
-  "Surprise, AZ":[33.630,-112.368],"Glendale, AZ":[33.539,-112.186],"Prescott, AZ":[34.540,-112.469],
-  "Aurora, CO":[39.729,-104.832],"Fort Collins, CO":[40.585,-105.084],"Lakewood, CO":[39.705,-105.082],
-  "Thornton, CO":[39.868,-104.972],"Pueblo, CO":[38.255,-104.609],"Boulder, CO":[40.015,-105.270],
-  "Greeley, CO":[40.423,-104.709],"Loveland, CO":[40.398,-105.075],"Longmont, CO":[40.167,-105.102],
-  "Aurora, IL":[41.760,-88.320],"Rockford, IL":[42.271,-89.094],"Joliet, IL":[41.525,-88.082],
-  "Naperville, IL":[41.786,-88.148],"Elgin, IL":[42.037,-88.281],"Waukegan, IL":[42.364,-87.845],
-  "Quincy, IL":[39.936,-91.410],"Edwardsville, IL":[38.811,-89.953],"Danville, IL":[40.125,-87.631],
-  "Independence, MO":[39.091,-94.415],"Joplin, MO":[37.084,-94.513],"St. Joseph, MO":[39.769,-94.847],
-  "St. Charles, MO":[38.788,-90.483],"O'Fallon, MO":[38.811,-90.699],"Kirksville, MO":[40.195,-92.583],
-  "Overland Park, KS":[38.983,-94.671],"Olathe, KS":[38.879,-94.820],"Salina, KS":[38.840,-97.611],
-  "Topeka, KS":[39.048,-95.678],"Hays, KS":[38.879,-99.326],"Pittsburg, KS":[37.411,-94.705],
-  "Grand Island, NE":[40.925,-98.342],"Bellevue, NE":[41.137,-95.915],"Fremont, NE":[41.433,-96.498],
-  "Hastings, NE":[40.586,-98.389],"Norfolk, NE":[41.987,-97.417],"Columbus, NE":[41.430,-97.368],
-  "Council Bluffs, IA":[41.262,-95.861],"Dubuque, IA":[42.500,-90.664],"La Crosse, WI":[43.801,-91.240],
-  "Eau Claire, WI":[44.812,-91.499],"Oshkosh, WI":[44.025,-88.543],"Green Bay, WI":[44.520,-88.016],
-  "Kenosha, WI":[42.585,-87.821],"Racine, WI":[42.728,-87.783],"Appleton, WI":[44.262,-88.415],
-  "Janesville, WI":[42.683,-89.019],"Sheboygan, WI":[43.751,-87.714],"Waukesha, WI":[43.011,-88.232],
-  "St. Paul, MN":[44.954,-93.090],"Rochester, MN":[44.022,-92.470],"St. Cloud, MN":[45.560,-94.163],
-  "Moorhead, MN":[46.873,-96.768],"Winona, MN":[44.050,-91.639],"Bemidji, MN":[47.475,-94.880],
-  "Aberdeen, SD":[45.464,-98.486],"Vermillion, SD":[42.779,-96.929],"Minot, ND":[48.232,-101.296],
-  "Bismarck, ND":[46.808,-100.784],"Dickinson, ND":[46.880,-102.791],"Wayne, NE":[42.233,-97.017],
-  "Lowell, MA":[42.633,-71.317],"Brockton, MA":[42.083,-71.018],"New Bedford, MA":[41.636,-70.934],
-  "Quincy, MA":[42.252,-71.002],"Lynn, MA":[42.467,-70.943],"Fall River, MA":[41.701,-71.155],
-  "Newton, MA":[42.337,-71.209],"Lawrence, MA":[42.707,-71.163],"Somerville, MA":[42.388,-71.100],
-  "Cranston, RI":[41.780,-71.438],"Warwick, RI":[41.700,-71.418],"Pawtucket, RI":[41.879,-71.384],
-  "Lewiston, ME":[44.100,-70.215],"Bangor, ME":[44.801,-68.778],
-};
-
 import { useState, useEffect, useRef, useMemo } from "react";
 import * as d3 from "d3";
 
@@ -272,6 +134,136 @@ const STATE_NAMES = {
   DC:"Washington D.C.",
 };
 
+// ── CITY COORDINATES (real coords for accurate distance + heatmap placement) ─
+const CITY_COORDS = {
+  "New York, NY":[40.712,-74.006],"Los Angeles, CA":[34.052,-118.244],"Chicago, IL":[41.878,-87.630],
+  "Houston, TX":[29.760,-95.370],"Phoenix, AZ":[33.448,-112.074],"Philadelphia, PA":[39.953,-75.163],
+  "San Antonio, TX":[29.424,-98.494],"San Diego, CA":[32.716,-117.161],"Dallas, TX":[32.780,-96.801],
+  "San Jose, CA":[37.338,-121.886],"Austin, TX":[30.267,-97.743],"Jacksonville, FL":[30.332,-81.656],
+  "Fort Worth, TX":[32.755,-97.330],"Columbus, OH":[39.961,-82.999],"Charlotte, NC":[35.227,-80.843],
+  "Indianapolis, IN":[39.768,-86.158],"San Francisco, CA":[37.773,-122.432],"Seattle, WA":[47.608,-122.335],
+  "Denver, CO":[39.739,-104.984],"Nashville, TN":[36.165,-86.784],"Oklahoma City, OK":[35.467,-97.516],
+  "El Paso, TX":[31.761,-106.487],"Las Vegas, NV":[36.175,-115.136],"Louisville, KY":[38.253,-85.759],
+  "Baltimore, MD":[39.291,-76.609],"Milwaukee, WI":[43.049,-87.907],"Albuquerque, NM":[35.085,-106.651],
+  "Tucson, AZ":[32.222,-110.975],"Fresno, CA":[36.737,-119.787],"Sacramento, CA":[38.576,-121.487],
+  "Kansas City, MO":[39.098,-94.582],"Atlanta, GA":[33.749,-84.388],"Omaha, NE":[41.257,-95.934],
+  "Colorado Springs, CO":[38.834,-104.821],"Raleigh, NC":[35.787,-78.644],"Long Beach, CA":[33.770,-118.194],
+  "Minneapolis, MN":[44.980,-93.265],"Tampa, FL":[27.948,-82.457],"New Orleans, LA":[29.950,-90.066],
+  "Wichita, KS":[37.697,-97.316],"Lexington, KY":[38.045,-84.497],"St. Louis, MO":[38.627,-90.199],
+  "Pittsburgh, PA":[40.440,-79.996],"Cincinnati, OH":[39.103,-84.512],"Greensboro, NC":[36.073,-79.792],
+  "Lincoln, NE":[40.813,-96.702],"Buffalo, NY":[42.887,-78.879],"Fort Wayne, IN":[41.130,-85.128],
+  "Orlando, FL":[28.538,-81.380],"Madison, WI":[43.073,-89.401],"Durham, NC":[35.994,-78.899],
+  "Lubbock, TX":[33.578,-101.855],"Reno, NV":[39.530,-119.814],"Baton Rouge, LA":[30.458,-91.154],
+  "Richmond, VA":[37.541,-77.433],"Des Moines, IA":[41.600,-93.609],"Montgomery, AL":[32.361,-86.279],
+  "Shreveport, LA":[32.526,-93.750],"Akron, OH":[41.081,-81.519],"Little Rock, AR":[34.736,-92.331],
+  "Augusta, GA":[33.471,-82.011],"Grand Rapids, MI":[42.963,-85.668],"Knoxville, TN":[35.961,-83.921],
+  "Salt Lake City, UT":[40.760,-111.891],"Huntsville, AL":[34.730,-86.586],"Worcester, MA":[42.263,-71.803],
+  "Providence, RI":[41.824,-71.413],"Dayton, OH":[39.758,-84.192],"Lansing, MI":[42.733,-84.556],
+  "Hartford, CT":[41.763,-72.685],"Birmingham, AL":[33.521,-86.803],"Rochester, NY":[43.157,-77.616],
+  "Columbia, SC":[34.000,-81.035],"Savannah, GA":[32.081,-81.099],"Chattanooga, TN":[35.046,-85.311],
+  "Syracuse, NY":[43.048,-76.148],"Columbia, MO":[38.952,-92.333],"Gainesville, FL":[29.652,-82.325],
+  "Boise, ID":[43.615,-116.202],"Tallahassee, FL":[30.455,-84.253],"Waco, TX":[31.549,-97.147],
+  "Cedar Rapids, IA":[41.979,-91.662],"South Bend, IN":[41.684,-86.252],"Norman, OK":[35.222,-97.439],
+  "Provo, UT":[40.234,-111.659],"Springfield, MO":[37.216,-93.292],"Jackson, MS":[32.298,-90.184],
+  "Fort Collins, CO":[40.585,-105.084],"Sioux Falls, SD":[43.549,-96.700],"Boston, MA":[42.360,-71.058],
+  "Portland, ME":[43.658,-70.259],"Portland, OR":[45.523,-122.676],"Memphis, TN":[35.149,-90.048],
+  "Miami, FL":[25.775,-80.209],"Detroit, MI":[42.331,-83.046],"Cleveland, OH":[41.499,-81.695],
+  "Fayetteville, NC":[35.053,-78.878],"Fayetteville, AR":[36.062,-94.158],"Asheville, NC":[35.574,-82.551],
+  "Iowa City, IA":[41.661,-91.530],"Champaign, IL":[40.116,-88.243],"Ann Arbor, MI":[42.281,-83.743],
+  "Tuscaloosa, AL":[33.210,-87.569],"Eugene, OR":[44.052,-123.087],"College Station, TX":[30.628,-96.334],
+  "Ames, IA":[42.034,-93.620],"Bloomington, IN":[39.165,-86.526],"Bloomington, IL":[40.484,-88.994],
+  "Lawrence, KS":[38.973,-95.235],"State College, PA":[40.793,-77.860],"Clemson, SC":[34.683,-82.837],
+  "Oxford, OH":[39.508,-84.746],"West Lafayette, IN":[40.428,-86.910],"East Lansing, MI":[42.737,-84.484],
+  "DeKalb, IL":[41.929,-88.750],"Normal, IL":[40.515,-88.990],"Carbondale, IL":[37.727,-89.218],
+  "Mankato, MN":[44.165,-93.999],"Duluth, MN":[46.787,-92.100],"Fargo, ND":[46.877,-96.790],
+  "Grand Forks, ND":[47.925,-97.033],"Brookings, SD":[44.312,-96.798],"Kearney, NE":[40.700,-99.082],
+  "Manhattan, KS":[39.183,-96.572],"Emporia, KS":[38.404,-96.182],"Warrensburg, MO":[38.762,-93.736],
+  "Cape Girardeau, MO":[37.306,-89.518],"Edmond, OK":[35.653,-97.478],"Stillwater, OK":[36.122,-97.058],
+  "Denton, TX":[33.215,-97.133],"San Marcos, TX":[29.883,-97.941],"Nacogdoches, TX":[31.604,-94.655],
+  "Ruston, LA":[32.523,-92.638],"Monroe, LA":[32.510,-92.120],"Hammond, LA":[30.504,-90.462],
+  "Jonesboro, AR":[35.842,-90.704],"Conway, AR":[35.089,-92.442],"Florence, AL":[34.800,-87.677],
+  "Jacksonville, AL":[33.814,-85.765],"Troy, AL":[31.810,-85.969],"Florence, SC":[34.195,-79.763],
+  "Conway, SC":[33.836,-79.047],"Rock Hill, SC":[34.925,-81.025],"Statesboro, GA":[32.449,-81.783],
+  "Carrollton, GA":[33.580,-85.077],"Athens, GA":[33.961,-83.378],"Valdosta, GA":[30.833,-83.278],
+  "Albany, GA":[31.579,-84.156],"Kennesaw, GA":[34.023,-84.616],"Marietta, GA":[33.953,-84.550],
+  "Harrisonburg, VA":[38.436,-78.869],"Radford, VA":[37.131,-80.576],"Charlottesville, VA":[38.030,-78.480],
+  "Blacksburg, VA":[37.229,-80.414],"Norfolk, VA":[36.851,-76.286],"Lynchburg, VA":[37.414,-79.142],
+  "Morgantown, WV":[39.634,-79.956],"Huntington, WV":[38.415,-82.445],"Charleston, WV":[38.350,-81.633],
+  "Cambridge, MA":[42.374,-71.105],"Amherst, MA":[42.375,-72.519],"Burlington, VT":[44.476,-73.212],
+  "Princeton, NJ":[40.357,-74.668],"Ithaca, NY":[42.443,-76.502],"Starkville, MS":[33.460,-88.822],
+  "Oxford, MS":[34.366,-89.519],"Pullman, WA":[46.730,-117.180],"Missoula, MT":[46.872,-113.993],
+  "Bozeman, MT":[45.680,-111.044],"Flagstaff, AZ":[35.198,-111.651],"Davis, CA":[38.544,-121.741],
+  "Santa Barbara, CA":[34.421,-119.699],"Evanston, IL":[42.048,-87.679],"Notre Dame, IN":[41.705,-86.235],
+  "Chapel Hill, NC":[35.913,-79.055],"Greenville, SC":[34.852,-82.394],"Boone, NC":[36.217,-81.675],
+  "Wilmington, NC":[34.226,-77.946],"Spokane, WA":[47.659,-117.426],"Corvallis, OR":[44.564,-123.263],
+  "Pocatello, ID":[42.871,-112.446],"Twin Falls, ID":[42.563,-114.460],"Tempe, AZ":[33.426,-111.940],
+  "Logan, UT":[41.730,-111.834],"Ogden, UT":[41.223,-111.974],"Laramie, WY":[41.312,-105.591],
+  "Las Cruces, NM":[32.312,-106.778],"Evansville, IN":[37.972,-87.571],"Terre Haute, IN":[39.466,-87.414],
+  "Muncie, IN":[40.193,-85.387],"Springfield, IL":[39.798,-89.644],"Peoria, IL":[40.694,-89.589],
+  "Clarksville, TN":[36.530,-87.360],"Bowling Green, KY":[36.990,-86.444],"Owensboro, KY":[37.774,-87.113],
+  "Midland, TX":[31.997,-102.078],"Abilene, TX":[32.449,-99.733],"Amarillo, TX":[35.222,-101.831],
+  "Corpus Christi, TX":[27.800,-97.397],"Killeen, TX":[31.117,-97.728],"Tyler, TX":[32.351,-95.301],
+  "Beaumont, TX":[30.086,-94.102],"Plano, TX":[33.020,-96.700],"Garland, TX":[32.913,-96.639],
+  "Tulsa, OK":[36.154,-95.993],"Billings, MT":[45.784,-108.501],"Helena, MT":[46.596,-112.027],
+  "Cheyenne, WY":[41.140,-104.820],"Casper, WY":[42.867,-106.313],"Rapid City, SD":[44.080,-103.231],
+  "Sioux City, IA":[42.500,-96.400],"Davenport, IA":[41.524,-90.578],"Waterloo, IA":[42.497,-92.343],
+  "Springfield, MA":[42.101,-72.590],"New Haven, CT":[41.308,-72.928],"Newark, NJ":[40.736,-74.172],
+  "Albany, NY":[42.651,-73.755],"Binghamton, NY":[42.099,-75.917],"Scranton, PA":[41.409,-75.665],
+  "Erie, PA":[42.129,-80.085],"Harrisburg, PA":[40.265,-76.885],"Lancaster, PA":[40.038,-76.306],
+  "Allentown, PA":[40.602,-75.470],"Bethlehem, PA":[40.626,-75.370],"Wilmington, DE":[39.746,-75.547],
+  "Alexandria, VA":[38.805,-77.047],"Roanoke, VA":[37.271,-79.941],"Newport News, VA":[37.101,-76.493],
+  "Chesapeake, VA":[36.820,-76.287],"Virginia Beach, VA":[36.853,-75.978],"Hampton, VA":[37.031,-76.343],
+  "High Point, NC":[35.956,-80.006],"Gastonia, NC":[35.262,-81.187],"Concord, NC":[35.409,-80.580],
+  "Spartanburg, SC":[34.946,-81.931],"Charleston, SC":[32.784,-79.940],"Myrtle Beach, SC":[33.689,-78.888],
+  "Gainesville, GA":[34.302,-83.824],"Rome, GA":[34.257,-85.165],"Columbus, GA":[32.461,-84.988],
+  "Pensacola, FL":[30.421,-87.217],"Daytona Beach, FL":[29.211,-81.023],"Fort Lauderdale, FL":[26.122,-80.143],
+  "West Palm Beach, FL":[26.715,-80.053],"Boca Raton, FL":[26.368,-80.128],"Sarasota, FL":[27.337,-82.531],
+  "Fort Myers, FL":[26.640,-81.873],"Cape Coral, FL":[26.561,-81.949],"Lakeland, FL":[28.040,-81.951],
+  "Ocala, FL":[29.188,-82.140],"Clearwater, FL":[27.966,-82.800],"Mobile, AL":[30.694,-88.043],
+  "Dothan, AL":[31.224,-85.390],"Auburn, AL":[32.610,-85.480],"Hattiesburg, MS":[31.329,-89.290],
+  "Biloxi, MS":[30.396,-88.886],"Gulfport, MS":[30.367,-89.093],"Tupelo, MS":[34.259,-88.704],
+  "Manchester, NH":[42.996,-71.455],"Nashua, NH":[42.766,-71.468],"Concord, NH":[43.208,-71.538],
+  "Bellingham, WA":[48.746,-122.476],"Yakima, WA":[46.602,-120.505],"Olympia, WA":[47.042,-122.893],
+  "Bend, OR":[44.058,-121.315],"Medford, OR":[42.327,-122.875],"Salem, OR":[44.942,-123.030],
+  "Rexburg, ID":[43.826,-111.790],"Nampa, ID":[43.541,-116.567],"Idaho Falls, ID":[43.492,-112.034],
+  "Henderson, NV":[36.040,-114.982],"Carson City, NV":[39.164,-119.767],"St. George, UT":[37.105,-113.584],
+  "Mesa, AZ":[33.415,-111.831],"Chandler, AZ":[33.303,-111.841],"Scottsdale, AZ":[33.494,-111.926],
+  "Gilbert, AZ":[33.353,-111.789],"Glendale, AZ":[33.539,-112.186],"Prescott, AZ":[34.540,-112.469],
+  "Surprise, AZ":[33.630,-112.368],"Yuma, AZ":[32.693,-114.628],"Aurora, CO":[39.729,-104.832],
+  "Lakewood, CO":[39.705,-105.082],"Thornton, CO":[39.868,-104.972],"Pueblo, CO":[38.255,-104.609],
+  "Boulder, CO":[40.015,-105.270],"Greeley, CO":[40.423,-104.709],"Loveland, CO":[40.398,-105.075],
+  "Aurora, IL":[41.760,-88.320],"Rockford, IL":[42.271,-89.094],"Joliet, IL":[41.525,-88.082],
+  "Naperville, IL":[41.786,-88.148],"Elgin, IL":[42.037,-88.281],"Waukegan, IL":[42.364,-87.845],
+  "Independence, MO":[39.091,-94.415],"Joplin, MO":[37.084,-94.513],"St. Joseph, MO":[39.769,-94.847],
+  "Overland Park, KS":[38.983,-94.671],"Olathe, KS":[38.879,-94.820],"Salina, KS":[38.840,-97.611],
+  "Topeka, KS":[39.048,-95.678],"Grand Island, NE":[40.925,-98.342],"Fremont, NE":[41.433,-96.498],
+  "Council Bluffs, IA":[41.262,-95.861],"Dubuque, IA":[42.500,-90.664],"La Crosse, WI":[43.801,-91.240],
+  "Eau Claire, WI":[44.812,-91.499],"Oshkosh, WI":[44.025,-88.543],"Green Bay, WI":[44.520,-88.016],
+  "Kenosha, WI":[42.585,-87.821],"Racine, WI":[42.728,-87.783],"Appleton, WI":[44.262,-88.415],
+  "Janesville, WI":[42.683,-89.019],"St. Paul, MN":[44.954,-93.090],"Rochester, MN":[44.022,-92.470],
+  "St. Cloud, MN":[45.560,-94.163],"Moorhead, MN":[46.873,-96.768],"Bismarck, ND":[46.808,-100.784],
+  "Lowell, MA":[42.633,-71.317],"Brockton, MA":[42.083,-71.018],"New Bedford, MA":[41.636,-70.934],
+  "Quincy, MA":[42.252,-71.002],"Lynn, MA":[42.467,-70.943],"Fall River, MA":[41.701,-71.155],
+  "Newton, MA":[42.337,-71.209],"Somerville, MA":[42.388,-71.100],"Cranston, RI":[41.780,-71.438],
+  "Warwick, RI":[41.700,-71.418],"Lewiston, ME":[44.100,-70.215],"Bangor, ME":[44.801,-68.778],
+  "Kirksville, MO":[40.195,-92.583],"Warrensburg, MO":[38.762,-93.736],"Rolla, MO":[37.951,-91.771],
+  "St. Cloud, MN":[45.560,-94.163],"Bemidji, MN":[47.475,-94.880],"Winona, MN":[44.050,-91.639],
+  "Aberdeen, SD":[45.464,-98.486],"Vermillion, SD":[42.779,-96.929],"Wayne, NE":[42.233,-97.017],
+  "Hays, KS":[38.879,-99.326],"Pittsburg, KS":[37.411,-94.705],"Tahlequah, OK":[35.915,-94.970],
+  "Stephenville, TX":[32.220,-98.202],"Commerce, TX":[33.249,-95.902],"Huntsville, TX":[30.724,-95.551],
+  "Natchitoches, LA":[31.761,-93.087],"Thibodaux, LA":[29.797,-90.814],"Grambling, LA":[32.526,-92.718],
+  "Monticello, AR":[33.630,-91.790],"Magnolia, AR":[33.267,-93.240],"Arkadelphia, AR":[34.120,-93.054],
+  "Russellville, AR":[35.279,-93.134],"Pine Bluff, AR":[34.229,-92.003],"Livingston, AL":[32.587,-88.191],
+  "Montevallo, AL":[33.101,-86.865],"Milledgeville, GA":[33.080,-83.231],"Dahlonega, GA":[34.532,-83.988],
+  "Warner Robins, GA":[32.614,-83.600],"Farmville, VA":[37.302,-78.395],"Fredericksburg, VA":[38.304,-77.461],
+  "Shippensburg, PA":[40.050,-77.521],"Bloomsburg, PA":[41.005,-76.455],"Lock Haven, PA":[41.138,-77.448],
+  "Slippery Rock, PA":[41.064,-80.057],"Indiana, PA":[40.621,-79.152],"Millersville, PA":[39.999,-76.360],
+  "West Chester, PA":[39.958,-75.606],"Edinboro, PA":[41.877,-80.126],"Cheney, WA":[47.488,-117.576],
+  "Ellensburg, WA":[46.997,-120.548],"Monmouth, OR":[44.849,-123.231],"Ashland, OR":[42.195,-122.710],
+  "La Grande, OR":[45.325,-118.088],"Caldwell, ID":[43.663,-116.688],"Lewiston, ID":[46.416,-117.018],
+  "Cedar City, UT":[37.677,-113.061],"West Valley City, UT":[40.689,-112.001],"Logan, UT":[41.730,-111.834],
+};
+
 const STATE_CAPITALS = {
   AL:[32.361,-86.279],AK:[61.218,-149.900],AZ:[33.448,-112.074],AR:[34.746,-92.289],
   CA:[38.576,-121.487],CO:[39.739,-104.984],CT:[41.764,-72.685],DE:[39.157,-75.524],
@@ -299,7 +291,7 @@ const getState = (hometown) => {
 function resolveHometownCoords(hometown) {
   if (!hometown || typeof hometown !== "string") return null;
   const s = hometown.trim();
-  const match = s.match(/^([A-Za-z][A-Za-z\s\.\-\']{1,40}),\s+([A-Z]{2})$/);
+  const match = s.match(/^([A-Za-z][A-Za-z\s\.\-']{1,40}),\s+([A-Z]{2})$/);
   if (!match) return null;
   const city = match[1].trim();
   const state = match[2];
@@ -307,7 +299,7 @@ function resolveHometownCoords(hometown) {
   const bad = /\b(championship|championships|invitational|invit|classic|relays?|cross.?country|indoor|outdoor|university|college)\b/i;
   if (bad.test(city)) return null;
   if (!STATE_CAPITALS[state]) return null;
-  // Use real city coords if known; fall back to state centroid
+  // Use real city coords if known, fall back to state centroid
   return CITY_COORDS[s] || STATE_CAPITALS[state];
 }
 
@@ -418,6 +410,9 @@ const distLabel = d => !d ? "Unknown" : d<100?"Local (<100 mi)":d<400?"Regional 
 // ── HEATMAP CANVAS ────────────────────────────────────────────────────────────
 function drawHeatmap(canvas, athletes, projection) {
   if (!canvas || !projection || athletes.length === 0) return;
+  // Always sync canvas pixel dims to its CSS display size first
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width > 10) { canvas.width = Math.round(rect.width); canvas.height = Math.round(rect.height); }
   const W = canvas.width, H = canvas.height;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, W, H);
@@ -430,8 +425,8 @@ function drawHeatmap(canvas, athletes, projection) {
 
   const density = new Float32Array(W * H);
 
-  // Pass 1: tight city-level kernel for local hotspots
-  const R1 = Math.max(10, Math.round(W * 0.011)), bw1 = R1 / 1.4;
+  // Pass 1: tight city-level kernel
+  const R1 = Math.max(10, Math.round(W * 0.012)), bw1 = R1 / 1.5;
   pts.forEach(([px, py]) => {
     const x0=Math.max(0,(px-R1)|0), x1=Math.min(W-1,(px+R1+1)|0);
     const y0=Math.max(0,(py-R1)|0), y1=Math.min(H-1,(py+R1+1)|0);
@@ -441,57 +436,56 @@ function drawHeatmap(canvas, athletes, projection) {
     }
   });
 
-  // Pass 2: wide regional kernel — creates NOAA-style smooth continuous field
-  const R2 = Math.max(45, Math.round(W * 0.045)), bw2 = R2 / 1.9;
+  // Pass 2: wide regional kernel — NOAA-style smooth blending
+  const R2 = Math.max(40, Math.round(W * 0.042)), bw2 = R2 / 1.9;
   pts.forEach(([px, py]) => {
     const x0=Math.max(0,(px-R2)|0), x1=Math.min(W-1,(px+R2+1)|0);
     const y0=Math.max(0,(py-R2)|0), y1=Math.min(H-1,(py+R2+1)|0);
     for (let y=y0;y<=y1;y++) for (let x=x0;x<=x1;x++) {
       const d2=(x-px)*(x-px)+(y-py)*(y-py);
-      density[y*W+x] += 0.4 * Math.exp(-d2/(2*bw2*bw2));
+      density[y*W+x] += 0.38 * Math.exp(-d2/(2*bw2*bw2));
     }
   });
 
   const vals = Array.from(density).filter(v=>v>0).sort((a,b)=>a-b);
-  const mx = vals[Math.floor(vals.length*0.996)] || vals[vals.length-1] || 1;
+  const mx = vals[Math.floor(vals.length * 0.995)] || vals[vals.length-1] || 1;
 
-  // Warm palette matching NOAA reference: white -> peach -> salmon -> brick -> dark red
-  const STOPS=[
+  // Warm palette: white → peach → salmon → brick → dark red (matches NOAA reference)
+  const STOPS = [
     [0.00, null],
-    [0.02, [255,248,244, 25]],
-    [0.07, [252,225,208, 75]],
-    [0.16, [245,192,165,125]],
-    [0.28, [230,152,115,160]],
-    [0.44, [205,100, 65,190]],
-    [0.63, [178, 55, 28,210]],
-    [0.82, [145, 20,  8,225]],
-    [1.00, [105,  4,  2,240]],
+    [0.02, [255,248,244, 20]],
+    [0.07, [252,222,205, 70]],
+    [0.16, [243,188,160,120]],
+    [0.28, [228,148,108,158]],
+    [0.44, [202, 96, 58,190]],
+    [0.63, [172, 48, 22,212]],
+    [0.82, [138, 16,  5,228]],
+    [1.00, [ 98,  3,  1,242]],
   ];
   const lerp=(a,b,t)=>a+(b-a)*t;
-  const img=ctx.createImageData(W,H);
-  for (let i=0;i<density.length;i++){
-    const t=Math.min(1,density[i]/mx);
-    if(t<STOPS[1][0])continue;
-    let s0=STOPS[1],s1=STOPS[2];
-    for(let k=1;k<STOPS.length-1;k++){
-      if(t>=STOPS[k][0]&&t<=STOPS[k+1][0]){s0=STOPS[k];s1=STOPS[k+1];break;}
+  const img = ctx.createImageData(W, H);
+  for (let i=0; i<density.length; i++) {
+    const t = Math.min(1, density[i]/mx);
+    if (t < STOPS[1][0]) continue;
+    let s0=STOPS[1], s1=STOPS[2];
+    for (let k=1; k<STOPS.length-1; k++) {
+      if (t>=STOPS[k][0] && t<=STOPS[k+1][0]) { s0=STOPS[k]; s1=STOPS[k+1]; break; }
     }
-    if(t>STOPS[STOPS.length-1][0]){s0=STOPS[STOPS.length-2];s1=STOPS[STOPS.length-1];}
-    const f=s1[0]===s0[0]?1:(t-s0[0])/(s1[0]-s0[0]);
-    const c0=s0[1],c1=s1[1],ii=i*4;
+    if (t > STOPS[STOPS.length-1][0]) { s0=STOPS[STOPS.length-2]; s1=STOPS[STOPS.length-1]; }
+    const f = s1[0]===s0[0] ? 1 : (t-s0[0])/(s1[0]-s0[0]);
+    const c0=s0[1], c1=s1[1], ii=i*4;
     img.data[ii]  =Math.round(lerp(c0[0],c1[0],f));
     img.data[ii+1]=Math.round(lerp(c0[1],c1[1],f));
     img.data[ii+2]=Math.round(lerp(c0[2],c1[2],f));
     img.data[ii+3]=Math.round(lerp(c0[3],c1[3],f));
   }
-  ctx.putImageData(img,0,0);
+  ctx.putImageData(img, 0, 0);
 }
 
 // ── US MAP ────────────────────────────────────────────────────────────────────
 function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, highlightHometown, mapMode, selectedStates}) {
   const svgRef=useRef(null), canvasRef=useRef(null), projRef=useRef(null), containerRef=useRef(null);
-  const [geo,setGeo]=useState(null), [tooltip,setTooltip]=useState(null);
-  const [dims,setDims]=useState({W:960,H:560});
+  const [geo,setGeo]=useState(null), [tooltip,setTooltip]=useState(null), [dims,setDims]=useState({W:960,H:560});
   const FIPS_ABBR={"01":"AL","02":"AK","04":"AZ","05":"AR","06":"CA","08":"CO","09":"CT","10":"DE","11":"DC","12":"FL","13":"GA","15":"HI","16":"ID","17":"IL","18":"IN","19":"IA","20":"KS","21":"KY","22":"LA","23":"ME","24":"MD","25":"MA","26":"MI","27":"MN","28":"MS","29":"MO","30":"MT","31":"NE","32":"NV","33":"NH","34":"NJ","35":"NM","36":"NY","37":"NC","38":"ND","39":"OH","40":"OK","41":"OR","42":"PA","44":"RI","45":"SC","46":"SD","47":"TN","48":"TX","49":"UT","50":"VT","51":"VA","53":"WA","54":"WV","55":"WI","56":"WY"};
 
   useEffect(() => {
@@ -499,23 +493,19 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     if (window.topojson) { load(window.topojson); return; }
     const sc=document.createElement("script"); sc.src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"; sc.onload=()=>load(window.topojson); document.head.appendChild(sc);
   }, []);
-  // ResizeObserver: updates canvas pixel dims when panels open/close — prevents warping
+
+  // ResizeObserver prevents canvas warping when panels open/close
   useEffect(() => {
     if (!containerRef.current) return;
-    const ro = new ResizeObserver(entries => {
-      for (const e of entries) {
-        const W = Math.round(e.contentRect.width);
-        const H = Math.round(e.contentRect.height);
-        if (W > 10 && H > 10) {
-          setDims({W, H});
-          if (canvasRef.current) { canvasRef.current.width=W; canvasRef.current.height=H; }
-        }
+    const ro = new ResizeObserver(e => {
+      for (const entry of e) {
+        const W=Math.round(entry.contentRect.width), H=Math.round(entry.contentRect.height);
+        if (W>10&&H>10) { setDims({W,H}); if(canvasRef.current){canvasRef.current.width=W;canvasRef.current.height=H;} }
       }
     });
     ro.observe(containerRef.current);
-    return () => ro.disconnect();
+    return ()=>ro.disconnect();
   }, []);
-
 
   useEffect(() => {
     if (!geo || !svgRef.current) return;
@@ -532,18 +522,18 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     g.selectAll("path.state").data(geo.features).join("path")
       .attr("class","state").attr("d",path)
       .attr("fill",d=>{
-        if(mapMode==="heatmap") return "#FFFFFF";
+        if(mapMode==="heatmap")return"#FFFFFF";
         const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
-        if(!hasStateFilter) return "#E6E7EE";
+        if(!hasStateFilter)return"#E6E7EE";
         return selectedStates.includes(abbr)?"#FCC399":"#F1F2F5";
       })
       .attr("stroke",d=>{
-        if(mapMode==="heatmap") return "rgba(120,110,105,0.45)";
+        if(mapMode==="heatmap")return"rgba(110,100,95,0.4)";
         const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
         return hasStateFilter&&selectedStates.includes(abbr)?T.orange:"#CCCFDD";
       })
       .attr("stroke-width",d=>{
-        if(mapMode==="heatmap") return 0.65;
+        if(mapMode==="heatmap")return 0.6;
         const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
         return hasStateFilter&&selectedStates.includes(abbr)?2:0.8;
       })
@@ -561,16 +551,20 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const dimmed=athletes.filter(a=>!stateFiltered.includes(a));
 
     if (mapMode === "flows") {
-      dimmed.forEach(a=>{
+      // Cap dimmed arcs to avoid visual overload — shuffle and take first 300
+      const dimmedCapped = dimmed.length > 300
+        ? dimmed.slice().sort(()=>Math.random()-0.5).slice(0,300)
+        : dimmed;
+      dimmedCapped.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
-        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.55;
-        g.append("path").attr("d",`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`).attr("fill","none").attr("stroke","rgba(0,0,0,0.04)").attr("stroke-width",0.8);
+        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.42;
+        g.append("path").attr("d",`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`).attr("fill","none").attr("stroke","rgba(0,0,0,0.03)").attr("stroke-width",0.7);
       });
       active.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
         if(!a.hometownCoords) return;
         const dist=haversine(a.hometownCoords,a.collegeCoords), col=distColor(dist), isSel=selectedAthlete?.id===a.id;
-        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.55;
+        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.42;
         const arc=`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`;
         if (isSel) g.append("path").attr("d",arc).attr("fill","none").attr("stroke",`${T.orange}55`).attr("stroke-width",8);
         g.append("path").attr("d",arc).attr("fill","none").attr("stroke",isSel?T.orange:col).attr("stroke-width",isSel?2.5:1.6).attr("stroke-opacity",isSel?1:0.82).style("cursor","pointer")
@@ -607,11 +601,10 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
       return;
     }
     drawHeatmap(canvasRef.current, athletes, projRef.current);
-  }, [mapMode, athletes, geo]);
+  }, [mapMode, athletes, geo, dims]);
 
   return (
     <div ref={containerRef} style={{position:"relative",width:"100%",height:"100%"}}>
-      {/* Canvas behind SVG so state borders render on top of heat */}
       <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",width:"100%",height:"100%",display:mapMode==="heatmap"?"block":"none"}}
         width={dims.W} height={dims.H}/>
       <svg ref={svgRef} style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"block"}}/>
@@ -863,17 +856,23 @@ function applyFilters(athletes, filters, search="", performanceRanges={}) {
 function HeatmapPanel({athletes}) {
   const [rankTab, setRankTab] = useState("cities");
 
+  // Filter athletes where hometown = college city (data pollution like "Chestnut Hill, MA" = Boston College)
+  const realHomers = useMemo(() =>
+    athletes.filter(a => a.hometownCoords && a.collegeCoords &&
+      haversine(a.hometownCoords, a.collegeCoords) > 5),
+    [athletes]);
+
   const allCities = useMemo(() => {
     const map={};
-    athletes.forEach(a=>{if(!a.hometown||!a.hometownCoords)return;if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
+    realHomers.forEach(a=>{if(!a.hometown)return;if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
     return Object.values(map).sort((a,b)=>b.count-a.count);
-  }, [athletes]);
+  }, [realHomers]);
   const topCities = useMemo(() => allCities.slice(0,20), [allCities]);
 
   const topStates = useMemo(() => {
     const map={};
-    athletes.forEach(a=>{
-      if(!a.hometown||!a.hometownCoords)return;
+    realHomers.forEach(a=>{
+      if(!a.hometown)return;
       const st=getState(a.hometown); if(!st) return;
       if(!map[st]) map[st]={abbr:st,name:STATE_NAMES[st]||st,count:0,cities:new Set()};
       map[st].count++; map[st].cities.add(a.hometown);
@@ -882,8 +881,8 @@ function HeatmapPanel({athletes}) {
   }, [athletes]);
 
   const uniqueStateCount = useMemo(() => {
-    const s=new Set(); athletes.forEach(a=>{const st=getState(a.hometown);if(st)s.add(st);}); return s.size;
-  }, [athletes]);
+    const s=new Set(); realHomers.forEach(a=>{const st=getState(a.hometown);if(st)s.add(st);}); return s.size;
+  }, [realHomers]);
 
   return (
     <div style={{padding:"14px",height:"100%",overflowY:"auto"}}>
@@ -903,7 +902,7 @@ function HeatmapPanel({athletes}) {
       <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
         <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:7}}>Density Scale</div>
         <div style={{display:"flex",height:10,borderRadius:4,overflow:"hidden",marginBottom:5}}>
-          <div style={{height:"100%",background:"linear-gradient(to right,#FFF8F4,#F5C0A5,#D46441,#921408)",borderRadius:4}}/>
+          <div style={{flex:1,background:"linear-gradient(to right,#FFF8F4,#F3BC9F,#CA6038,#880302)",borderRadius:4}}/>
         </div>
         <div style={{display:"flex",justifyContent:"space-between"}}>
           <span style={{color:T.dim,fontSize:9}}>Sparse</span>
@@ -1542,7 +1541,11 @@ export default function App() {
 
   // ── Filtered list — depends on athletes state ──────────────────────────────
   const filtered = useMemo(() => applyFilters(athletes, filters, search, performanceRanges), [athletes, filters, search, performanceRanges]);
-  const overallAvg = useMemo(() => { const withCoords=filtered.filter(a=>a.hometownCoords); return withCoords.length ? Math.round(withCoords.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/withCoords.length) : 0; }, [filtered]);
+  // Exclude athletes where hometown ≈ college city (data quality: college stored as hometown)
+  const overallAvg = useMemo(() => {
+    const valid=filtered.filter(a=>a.hometownCoords&&a.collegeCoords&&haversine(a.hometownCoords,a.collegeCoords)>5);
+    return valid.length ? Math.round(valid.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/valid.length) : 0;
+  }, [filtered]);
   const hasFilters = filters.events.length>0||filters.conference||filters.college||filters.hsYear||filters.collegeYear||search||filters.season!=="all"||selectedStates.length>0;
 
   const handleAthleteClick = a => { setSelectedAthlete(s=>s?.id===a.id?null:a); setRightTab("athlete"); };
@@ -1670,7 +1673,7 @@ export default function App() {
                 <div>
                   <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Hometown Density</div>
                   <div style={{display:"flex",gap:3,alignItems:"center",marginBottom:4}}>
-                    <div style={{height:7,borderRadius:3,background:"linear-gradient(to right,#FFF8F4,#F5C0A5,#D46441,#921408)"}}/>
+                    <div style={{height:7,borderRadius:3,background:"linear-gradient(to right,#FFF8F4,#F3BC9F,#CA6038,#880302)"}}/>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:T.dim,fontSize:9}}>Low</span><span style={{color:T.dim,fontSize:9}}>High</span></div>
                   <div style={{color:T.muted,fontSize:9,marginTop:4}}>{filtered.length} athletes shown</div>
