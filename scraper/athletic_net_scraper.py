@@ -184,17 +184,21 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
             # athletic.net shows hometown as "City, ST" in the bio section
             body_text = page.inner_text("body")
 
-            # Look for "City, ST" pattern in rendered text
-            m = re.search(
-                r'\b([\w\s\.\'\-]{2,30}),\s+(' + '|'.join(US_STATES) + r')\b',
+# Look for "City, ST" pattern — find ALL matches, take the last clean one
+            # (profile text has college team junk before the actual hometown)
+            all_matches = re.findall(
+                r'([\w][\w\s\.\'\-]{1,28}),\s+(' + '|'.join(US_STATES) + r')\b',
                 body_text
             )
-            if m:
-                candidate = m.group(0).strip()
-                # Filter out noise like "Track and Field, AL"
-                if not any(kw in candidate.lower() for kw in ["track", "field", "cross", "sport", "event"]):
-                    hometown = candidate
-                    hometown_state = hometown_state or m.group(2)
+            for city, state in reversed(all_matches):
+                city = city.strip()
+                if any(kw in city.lower() for kw in ["track", "field", "cross", "sport", "event", "collegiate", "club", "unattached"]):
+                    continue
+                if len(city) < 2:
+                    continue
+                hometown = f"{city}, {state}"
+                hometown_state = hometown_state or state
+                break
 
             # Look for high school name
             hs_patterns = [
