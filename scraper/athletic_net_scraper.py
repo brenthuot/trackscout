@@ -65,12 +65,6 @@ US_STATES = {
     "VA","WA","WV","WI","WY","DC"
 }
 
-NOISE_WORDS = [
-    "track", "field", "cross", "sport", "event", "collegiate",
-    "club", "unattached", "relay", "indoor", "outdoor", "rankings",
-    "suggest", "correction", "middle school", "high school"
-]
-
 
 # ── MARK PARSER ───────────────────────────────────────────────────────────────
 def parse_mark(s: str) -> float | None:
@@ -97,7 +91,7 @@ def parse_mark(s: str) -> float | None:
 # ── PLAYWRIGHT SEARCH ─────────────────────────────────────────────────────────
 def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
     """Search athletic.net for athlete, return list of profile URLs."""
-    # No year in query — causes no results. Filter by grad year on profile instead.
+    # No year in query — year in query causes no results. Filter by grad year on profile instead.
     search_url = f"https://www.athletic.net/search#?q={name}"
 
     try:
@@ -174,36 +168,27 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
         high_school = ""
 
         # State from title: "Name - AZ Track & Field Bio"
-        # Handles both "Track & Field" and "Track and Field"
-        title_state = re.search(r'-\s+([A-Z]{2})\s+Track(?:\s+and\s+|&amp;|&\s*)Field Bio', title)
+        # \s* handles the space around & in "Track & Field"
+        title_state = re.search(r'-\s+([A-Z]{2})\s+Track\s*(?:and|&amp;|&)\s*Field Bio', title)
         if title_state and title_state.group(1) in US_STATES:
             hometown_state = title_state.group(1)
 
-        # Try to get full rendered text and look for structured data
         try:
             body_text = page.inner_text("body")
 
-            # DEBUG — log body snippet to help diagnose extraction issues
-            log.info(f"    Body snippet: {body_text[:400]!r}")
-
-            # Find ALL "City, ST" matches in rendered text, iterate in reverse
-            # to skip college team junk (e.g. "WildcatsCollegiate\nTucson, AZ")
-            # which appears before the actual hometown
+            # Athletic.net renders hometown as a line: "City, ST, USA | Site Supporter"
+            # Use splitlines() to avoid \r\n vs \n issues, then match each line from start
             states_pattern = '|'.join(US_STATES)
-            all_matches = re.findall(
-                r'([\w][\w\s\.\'\-]{1,28}),\s+(' + states_pattern + r')\b',
-                body_text
-            )
-            for city, state in reversed(all_matches):
-                city = city.strip()
-                # Skip noise matches
-                if any(kw in city.lower() for kw in NOISE_WORDS):
-                    continue
-                if len(city) < 2:
-                    continue
-                hometown = f"{city}, {state}"
-                hometown_state = hometown_state or state
-                break
+            for line in body_text.splitlines():
+                line = line.strip()
+                lm = re.match(
+                    r'^([\w][^,\n]{1,28}),\s+(' + states_pattern + r'),\s+USA\b',
+                    line
+                )
+                if lm:
+                    hometown = f"{lm.group(1).strip()}, {lm.group(2)}"
+                    hometown_state = hometown_state or lm.group(2)
+                    break
 
             # Look for high school name
             hs_patterns = [
