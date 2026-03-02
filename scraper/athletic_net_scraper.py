@@ -91,14 +91,12 @@ def parse_mark(s: str) -> float | None:
 # ── PLAYWRIGHT SEARCH ─────────────────────────────────────────────────────────
 def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
     """Search athletic.net for athlete, return list of profile URLs."""
-    # No year in query — year in query causes no results. Filter by grad year on profile instead.
     search_url = f"https://www.athletic.net/search#?q={name}"
 
     try:
         log.info(f"  [Search] {name} → {search_url}")
         page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
 
-        # Wait for Angular to process the hash and render athlete links
         try:
             page.wait_for_selector("a[href*='/athlete/']", timeout=12000)
         except PlaywrightTimeout:
@@ -146,12 +144,11 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
         log.info(f"  [Profile] Loading {url}")
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-        # Wait for Angular to render the athlete name/bio
         try:
             page.wait_for_selector("h1, h2, title", timeout=10000)
         except PlaywrightTimeout:
             pass
-        time.sleep(2)  # extra buffer for full render
+        time.sleep(2)
 
         # ── Verify name ──────────────────────────────────────────────────────
         title = page.title()
@@ -168,7 +165,6 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
         high_school = ""
 
         # State from title: "Name - AZ Track & Field Bio"
-        # \s* handles the space around & in "Track & Field"
         title_state = re.search(r'-\s+([A-Z]{2})\s+Track\s*(?:and|&amp;|&)\s*Field Bio', title)
         if title_state and title_state.group(1) in US_STATES:
             hometown_state = title_state.group(1)
@@ -176,8 +172,8 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
         try:
             body_text = page.inner_text("body")
 
-            # Athletic.net renders hometown as a line: "City, ST, USA | Site Supporter"
-            # Use splitlines() to avoid \r\n vs \n issues, then match each line from start
+            # Athletic.net renders hometown as its own line: "City, ST, USA | Site Supporter"
+            # splitlines() handles \r\n vs \n differences across platforms
             states_pattern = '|'.join(US_STATES)
             for line in body_text.splitlines():
                 line = line.strip()
@@ -207,7 +203,7 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
         except Exception as e:
             log.debug(f"    Body text extraction error: {e}")
 
-        # Fallback: check page JSON state (Angular sometimes embeds data)
+        # Fallback: check page JSON state
         if not hometown:
             try:
                 json_data = page.evaluate("""() => {
@@ -355,11 +351,21 @@ def run(group: str = "all", limit: int = 99999, process_all: bool = False):
     log.info(f"Athletic.net Backfill v4 (Playwright) — Group: {group}, Limit: {limit}")
     log.info("=" * 60)
 
+    # Paginate through all athletes — Supabase returns max 1,000 rows per request
     try:
-        result = supabase.table("athletes").select(
-            "id, name, college, conference, hs_grad_year, college_year, hometown"
-        ).eq("source", "tfrrs").execute()
-        all_athletes = result.data or []
+        all_athletes = []
+        offset = 0
+        while True:
+            result = supabase.table("athletes").select(
+                "id, name, college, conference, hs_grad_year, college_year, hometown"
+            ).eq("source", "tfrrs").range(offset, offset + 999).execute()
+            batch = result.data or []
+            all_athletes.extend(batch)
+            log.info(f"  Fetched {len(all_athletes)} athletes so far (batch size: {len(batch)})")
+            if len(batch) < 1000:
+                break
+            offset += 1000
+        log.info(f"  Total athletes fetched: {len(all_athletes)}")
     except Exception as e:
         log.error(f"Failed to fetch athletes: {e}")
         return
@@ -390,7 +396,6 @@ def run(group: str = "all", limit: int = 99999, process_all: bool = False):
             viewport={"width": 1280, "height": 800},
             locale="en-US",
         )
-        # Hide webdriver flag
         context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = context.new_page()
 
