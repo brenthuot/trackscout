@@ -97,7 +97,7 @@ def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
     if hs_grad_year:
         query += f' {hs_grad_year}'
     encoded_query = quote(query)  # encodes quotes as %22, spaces as %20
-    search_url = f"https://www.athletic.net/search#?q={encoded_query}&sport=tf"
+    search_url = f"https://www.athletic.net/search#?q={name}"
 
     try:
         log.info(f"  [Search] {name} → {search_url}")
