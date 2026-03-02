@@ -134,7 +134,9 @@ const STATE_NAMES = {
   DC:"Washington D.C.",
 };
 
-// ── CITY COORDINATES (real coords for accurate distance + heatmap placement) ─
+// ── CITY COORDINATES ─────────────────────────────────────────────────────────
+// Real lat/lon for ~400 US cities so heatmap and distances use actual locations
+// not state capitals. Keyed as "City, ST" to match hometown field format.
 const CITY_COORDS = {
   "New York, NY":[40.712,-74.006],"Los Angeles, CA":[34.052,-118.244],"Chicago, IL":[41.878,-87.630],
   "Houston, TX":[29.760,-95.370],"Phoenix, AZ":[33.448,-112.074],"Philadelphia, PA":[39.953,-75.163],
@@ -147,7 +149,7 @@ const CITY_COORDS = {
   "Baltimore, MD":[39.291,-76.609],"Milwaukee, WI":[43.049,-87.907],"Albuquerque, NM":[35.085,-106.651],
   "Tucson, AZ":[32.222,-110.975],"Fresno, CA":[36.737,-119.787],"Sacramento, CA":[38.576,-121.487],
   "Kansas City, MO":[39.098,-94.582],"Atlanta, GA":[33.749,-84.388],"Omaha, NE":[41.257,-95.934],
-  "Colorado Springs, CO":[38.834,-104.821],"Raleigh, NC":[35.787,-78.644],"Long Beach, CA":[33.770,-118.194],
+  "Colorado Springs, CO":[38.834,-104.821],"Raleigh, NC":[35.787,-78.644],
   "Minneapolis, MN":[44.980,-93.265],"Tampa, FL":[27.948,-82.457],"New Orleans, LA":[29.950,-90.066],
   "Wichita, KS":[37.697,-97.316],"Lexington, KY":[38.045,-84.497],"St. Louis, MO":[38.627,-90.199],
   "Pittsburgh, PA":[40.440,-79.996],"Cincinnati, OH":[39.103,-84.512],"Greensboro, NC":[36.073,-79.792],
@@ -203,20 +205,20 @@ const CITY_COORDS = {
   "Clarksville, TN":[36.530,-87.360],"Bowling Green, KY":[36.990,-86.444],"Owensboro, KY":[37.774,-87.113],
   "Midland, TX":[31.997,-102.078],"Abilene, TX":[32.449,-99.733],"Amarillo, TX":[35.222,-101.831],
   "Corpus Christi, TX":[27.800,-97.397],"Killeen, TX":[31.117,-97.728],"Tyler, TX":[32.351,-95.301],
-  "Beaumont, TX":[30.086,-94.102],"Plano, TX":[33.020,-96.700],"Garland, TX":[32.913,-96.639],
-  "Tulsa, OK":[36.154,-95.993],"Billings, MT":[45.784,-108.501],"Helena, MT":[46.596,-112.027],
-  "Cheyenne, WY":[41.140,-104.820],"Casper, WY":[42.867,-106.313],"Rapid City, SD":[44.080,-103.231],
-  "Sioux City, IA":[42.500,-96.400],"Davenport, IA":[41.524,-90.578],"Waterloo, IA":[42.497,-92.343],
-  "Springfield, MA":[42.101,-72.590],"New Haven, CT":[41.308,-72.928],"Newark, NJ":[40.736,-74.172],
-  "Albany, NY":[42.651,-73.755],"Binghamton, NY":[42.099,-75.917],"Scranton, PA":[41.409,-75.665],
-  "Erie, PA":[42.129,-80.085],"Harrisburg, PA":[40.265,-76.885],"Lancaster, PA":[40.038,-76.306],
-  "Allentown, PA":[40.602,-75.470],"Bethlehem, PA":[40.626,-75.370],"Wilmington, DE":[39.746,-75.547],
-  "Alexandria, VA":[38.805,-77.047],"Roanoke, VA":[37.271,-79.941],"Newport News, VA":[37.101,-76.493],
-  "Chesapeake, VA":[36.820,-76.287],"Virginia Beach, VA":[36.853,-75.978],"Hampton, VA":[37.031,-76.343],
-  "High Point, NC":[35.956,-80.006],"Gastonia, NC":[35.262,-81.187],"Concord, NC":[35.409,-80.580],
-  "Spartanburg, SC":[34.946,-81.931],"Charleston, SC":[32.784,-79.940],"Myrtle Beach, SC":[33.689,-78.888],
-  "Gainesville, GA":[34.302,-83.824],"Rome, GA":[34.257,-85.165],"Columbus, GA":[32.461,-84.988],
-  "Pensacola, FL":[30.421,-87.217],"Daytona Beach, FL":[29.211,-81.023],"Fort Lauderdale, FL":[26.122,-80.143],
+  "Beaumont, TX":[30.086,-94.102],"Plano, TX":[33.020,-96.700],"Tulsa, OK":[36.154,-95.993],
+  "Billings, MT":[45.784,-108.501],"Helena, MT":[46.596,-112.027],"Cheyenne, WY":[41.140,-104.820],
+  "Casper, WY":[42.867,-106.313],"Rapid City, SD":[44.080,-103.231],"Sioux City, IA":[42.500,-96.400],
+  "Davenport, IA":[41.524,-90.578],"Waterloo, IA":[42.497,-92.343],"Springfield, MA":[42.101,-72.590],
+  "New Haven, CT":[41.308,-72.928],"Newark, NJ":[40.736,-74.172],"Albany, NY":[42.651,-73.755],
+  "Binghamton, NY":[42.099,-75.917],"Scranton, PA":[41.409,-75.665],"Erie, PA":[42.129,-80.085],
+  "Harrisburg, PA":[40.265,-76.885],"Lancaster, PA":[40.038,-76.306],"Allentown, PA":[40.602,-75.470],
+  "Bethlehem, PA":[40.626,-75.370],"Wilmington, DE":[39.746,-75.547],"Alexandria, VA":[38.805,-77.047],
+  "Roanoke, VA":[37.271,-79.941],"Newport News, VA":[37.101,-76.493],"Chesapeake, VA":[36.820,-76.287],
+  "Virginia Beach, VA":[36.853,-75.978],"Hampton, VA":[37.031,-76.343],"High Point, NC":[35.956,-80.006],
+  "Gastonia, NC":[35.262,-81.187],"Concord, NC":[35.409,-80.580],"Spartanburg, SC":[34.946,-81.931],
+  "Charleston, SC":[32.784,-79.940],"Myrtle Beach, SC":[33.689,-78.888],"Gainesville, GA":[34.302,-83.824],
+  "Rome, GA":[34.257,-85.165],"Columbus, GA":[32.461,-84.988],"Pensacola, FL":[30.421,-87.217],
+  "Daytona Beach, FL":[29.211,-81.023],"Fort Lauderdale, FL":[26.122,-80.143],
   "West Palm Beach, FL":[26.715,-80.053],"Boca Raton, FL":[26.368,-80.128],"Sarasota, FL":[27.337,-82.531],
   "Fort Myers, FL":[26.640,-81.873],"Cape Coral, FL":[26.561,-81.949],"Lakeland, FL":[28.040,-81.951],
   "Ocala, FL":[29.188,-82.140],"Clearwater, FL":[27.966,-82.800],"Mobile, AL":[30.694,-88.043],
@@ -246,22 +248,7 @@ const CITY_COORDS = {
   "Quincy, MA":[42.252,-71.002],"Lynn, MA":[42.467,-70.943],"Fall River, MA":[41.701,-71.155],
   "Newton, MA":[42.337,-71.209],"Somerville, MA":[42.388,-71.100],"Cranston, RI":[41.780,-71.438],
   "Warwick, RI":[41.700,-71.418],"Lewiston, ME":[44.100,-70.215],"Bangor, ME":[44.801,-68.778],
-  "Kirksville, MO":[40.195,-92.583],"Warrensburg, MO":[38.762,-93.736],"Rolla, MO":[37.951,-91.771],
-  "St. Cloud, MN":[45.560,-94.163],"Bemidji, MN":[47.475,-94.880],"Winona, MN":[44.050,-91.639],
-  "Aberdeen, SD":[45.464,-98.486],"Vermillion, SD":[42.779,-96.929],"Wayne, NE":[42.233,-97.017],
-  "Hays, KS":[38.879,-99.326],"Pittsburg, KS":[37.411,-94.705],"Tahlequah, OK":[35.915,-94.970],
-  "Stephenville, TX":[32.220,-98.202],"Commerce, TX":[33.249,-95.902],"Huntsville, TX":[30.724,-95.551],
-  "Natchitoches, LA":[31.761,-93.087],"Thibodaux, LA":[29.797,-90.814],"Grambling, LA":[32.526,-92.718],
-  "Monticello, AR":[33.630,-91.790],"Magnolia, AR":[33.267,-93.240],"Arkadelphia, AR":[34.120,-93.054],
-  "Russellville, AR":[35.279,-93.134],"Pine Bluff, AR":[34.229,-92.003],"Livingston, AL":[32.587,-88.191],
-  "Montevallo, AL":[33.101,-86.865],"Milledgeville, GA":[33.080,-83.231],"Dahlonega, GA":[34.532,-83.988],
-  "Warner Robins, GA":[32.614,-83.600],"Farmville, VA":[37.302,-78.395],"Fredericksburg, VA":[38.304,-77.461],
-  "Shippensburg, PA":[40.050,-77.521],"Bloomsburg, PA":[41.005,-76.455],"Lock Haven, PA":[41.138,-77.448],
-  "Slippery Rock, PA":[41.064,-80.057],"Indiana, PA":[40.621,-79.152],"Millersville, PA":[39.999,-76.360],
-  "West Chester, PA":[39.958,-75.606],"Edinboro, PA":[41.877,-80.126],"Cheney, WA":[47.488,-117.576],
-  "Ellensburg, WA":[46.997,-120.548],"Monmouth, OR":[44.849,-123.231],"Ashland, OR":[42.195,-122.710],
-  "La Grande, OR":[45.325,-118.088],"Caldwell, ID":[43.663,-116.688],"Lewiston, ID":[46.416,-117.018],
-  "Cedar City, UT":[37.677,-113.061],"West Valley City, UT":[40.689,-112.001],"Logan, UT":[41.730,-111.834],
+  "Chestnut Hill, MA":[42.337,-71.168],
 };
 
 const STATE_CAPITALS = {
@@ -295,11 +282,11 @@ function resolveHometownCoords(hometown) {
   if (!match) return null;
   const city = match[1].trim();
   const state = match[2];
-  // Word boundaries prevent rejecting Boston, Houston, Washington, Lexington, etc.
-  const bad = /\b(championship|championships|invitational|invit|classic|relays?|cross.?country|indoor|outdoor|university|college)\b/i;
+  // Word boundaries: won't reject Boston, Houston, Washington, Lexington etc.
+  const bad = /\b(championship|championships|invitational|classic|relays?|cross.?country|indoor|outdoor|university|college)\b/i;
   if (bad.test(city)) return null;
   if (!STATE_CAPITALS[state]) return null;
-  // Use real city coords if known, fall back to state centroid
+  // Real city coords first, fall back to state centroid
   return CITY_COORDS[s] || STATE_CAPITALS[state];
 }
 
@@ -410,9 +397,12 @@ const distLabel = d => !d ? "Unknown" : d<100?"Local (<100 mi)":d<400?"Regional 
 // ── HEATMAP CANVAS ────────────────────────────────────────────────────────────
 function drawHeatmap(canvas, athletes, projection) {
   if (!canvas || !projection || athletes.length === 0) return;
-  // Always sync canvas pixel dims to its CSS display size first
+  // Sync canvas pixel dims to actual display size (prevents warping & faint render)
   const rect = canvas.getBoundingClientRect();
-  if (rect.width > 10) { canvas.width = Math.round(rect.width); canvas.height = Math.round(rect.height); }
+  if (rect.width > 10) {
+    canvas.width = Math.round(rect.width);
+    canvas.height = Math.round(rect.height);
+  }
   const W = canvas.width, H = canvas.height;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, W, H);
@@ -425,7 +415,7 @@ function drawHeatmap(canvas, athletes, projection) {
 
   const density = new Float32Array(W * H);
 
-  // Pass 1: tight city-level kernel
+  // Pass 1: tight city-level kernel for visible hotspots
   const R1 = Math.max(10, Math.round(W * 0.012)), bw1 = R1 / 1.5;
   pts.forEach(([px, py]) => {
     const x0=Math.max(0,(px-R1)|0), x1=Math.min(W-1,(px+R1+1)|0);
@@ -436,8 +426,8 @@ function drawHeatmap(canvas, athletes, projection) {
     }
   });
 
-  // Pass 2: wide regional kernel — NOAA-style smooth blending
-  const R2 = Math.max(40, Math.round(W * 0.042)), bw2 = R2 / 1.9;
+  // Pass 2: wide regional kernel — creates smooth NOAA-style field
+  const R2 = Math.max(40, Math.round(W * 0.044)), bw2 = R2 / 1.9;
   pts.forEach(([px, py]) => {
     const x0=Math.max(0,(px-R2)|0), x1=Math.min(W-1,(px+R2+1)|0);
     const y0=Math.max(0,(py-R2)|0), y1=Math.min(H-1,(py+R2+1)|0);
@@ -450,17 +440,17 @@ function drawHeatmap(canvas, athletes, projection) {
   const vals = Array.from(density).filter(v=>v>0).sort((a,b)=>a-b);
   const mx = vals[Math.floor(vals.length * 0.995)] || vals[vals.length-1] || 1;
 
-  // Warm palette: white → peach → salmon → brick → dark red (matches NOAA reference)
+  // NOAA-style warm palette: white → peach → salmon → brick → dark red
   const STOPS = [
     [0.00, null],
     [0.02, [255,248,244, 20]],
     [0.07, [252,222,205, 70]],
-    [0.16, [243,188,160,120]],
-    [0.28, [228,148,108,158]],
-    [0.44, [202, 96, 58,190]],
-    [0.63, [172, 48, 22,212]],
-    [0.82, [138, 16,  5,228]],
-    [1.00, [ 98,  3,  1,242]],
+    [0.16, [243,188,160,118]],
+    [0.28, [228,148,108,155]],
+    [0.44, [202, 96, 58,188]],
+    [0.63, [172, 48, 22,210]],
+    [0.82, [138, 16,  5,226]],
+    [1.00, [ 98,  3,  1,240]],
   ];
   const lerp=(a,b,t)=>a+(b-a)*t;
   const img = ctx.createImageData(W, H);
@@ -469,11 +459,11 @@ function drawHeatmap(canvas, athletes, projection) {
     if (t < STOPS[1][0]) continue;
     let s0=STOPS[1], s1=STOPS[2];
     for (let k=1; k<STOPS.length-1; k++) {
-      if (t>=STOPS[k][0] && t<=STOPS[k+1][0]) { s0=STOPS[k]; s1=STOPS[k+1]; break; }
+      if (t>=STOPS[k][0]&&t<=STOPS[k+1][0]){s0=STOPS[k];s1=STOPS[k+1];break;}
     }
-    if (t > STOPS[STOPS.length-1][0]) { s0=STOPS[STOPS.length-2]; s1=STOPS[STOPS.length-1]; }
-    const f = s1[0]===s0[0] ? 1 : (t-s0[0])/(s1[0]-s0[0]);
-    const c0=s0[1], c1=s1[1], ii=i*4;
+    if (t>STOPS[STOPS.length-1][0]){s0=STOPS[STOPS.length-2];s1=STOPS[STOPS.length-1];}
+    const f=s1[0]===s0[0]?1:(t-s0[0])/(s1[0]-s0[0]);
+    const c0=s0[1],c1=s1[1],ii=i*4;
     img.data[ii]  =Math.round(lerp(c0[0],c1[0],f));
     img.data[ii+1]=Math.round(lerp(c0[1],c1[1],f));
     img.data[ii+2]=Math.round(lerp(c0[2],c1[2],f));
@@ -494,12 +484,11 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const sc=document.createElement("script"); sc.src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"; sc.onload=()=>load(window.topojson); document.head.appendChild(sc);
   }, []);
 
-  // ResizeObserver prevents canvas warping when panels open/close
   useEffect(() => {
     if (!containerRef.current) return;
-    const ro = new ResizeObserver(e => {
-      for (const entry of e) {
-        const W=Math.round(entry.contentRect.width), H=Math.round(entry.contentRect.height);
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) {
+        const W=Math.round(e.contentRect.width), H=Math.round(e.contentRect.height);
         if (W>10&&H>10) { setDims({W,H}); if(canvasRef.current){canvasRef.current.width=W;canvasRef.current.height=H;} }
       }
     });
@@ -528,12 +517,12 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
         return selectedStates.includes(abbr)?"#FCC399":"#F1F2F5";
       })
       .attr("stroke",d=>{
-        if(mapMode==="heatmap")return"rgba(110,100,95,0.4)";
+        if(mapMode==="heatmap")return"rgba(100,90,85,0.35)";
         const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
         return hasStateFilter&&selectedStates.includes(abbr)?T.orange:"#CCCFDD";
       })
       .attr("stroke-width",d=>{
-        if(mapMode==="heatmap")return 0.6;
+        if(mapMode==="heatmap")return 0.55;
         const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
         return hasStateFilter&&selectedStates.includes(abbr)?2:0.8;
       })
@@ -551,30 +540,47 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const dimmed=athletes.filter(a=>!stateFiltered.includes(a));
 
     if (mapMode === "flows") {
-      // Cap dimmed arcs to avoid visual overload — shuffle and take first 300
-      const dimmedCapped = dimmed.length > 300
-        ? dimmed.slice().sort(()=>Math.random()-0.5).slice(0,300)
-        : dimmed;
-      dimmedCapped.forEach(a=>{
+      // ── Cap rendering: sample when unfiltered to keep it legible ─────────
+      const MAX_ARCS = 600;
+      // Seed-stable sort so display doesn't shuffle on every render
+      const activeSorted = active.slice().sort((a,b)=>(a.id||"").localeCompare(b.id||""));
+      const displayActive = activeSorted.length > MAX_ARCS
+        ? activeSorted.filter((_,i)=> i % Math.ceil(activeSorted.length/MAX_ARCS) === 0)
+        : activeSorted;
+      const n = displayActive.length;
+
+      // Opacity + thickness scale with count — denser data = more transparent lines
+      const arcOpacity = n > 400 ? 0.28 : n > 200 ? 0.45 : n > 80 ? 0.62 : 0.80;
+      const arcWidth   = n > 400 ? 0.9  : n > 200 ? 1.1  : n > 80 ? 1.3  : 1.6;
+
+      // Dimmed arcs only drawn when there's an active focus (college or hometown highlight)
+      if (anyFocus) {
+        dimmed.forEach(a=>{
+          const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
+          const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.32;
+          g.append("path").attr("d",`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`).attr("fill","none").attr("stroke","rgba(0,0,0,0.03)").attr("stroke-width",0.6);
+        });
+      }
+
+      displayActive.forEach(a=>{
         const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
-        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.42;
-        g.append("path").attr("d",`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`).attr("fill","none").attr("stroke","rgba(0,0,0,0.03)").attr("stroke-width",0.7);
-      });
-      active.forEach(a=>{
-        const h=px(a.hometownCoords),c=px(a.collegeCoords); if(!h||!c) return;
-        if(!a.hometownCoords) return;
         const dist=haversine(a.hometownCoords,a.collegeCoords), col=distColor(dist), isSel=selectedAthlete?.id===a.id;
-        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.42;
+        // Gentler arc curvature — 0.32 instead of 0.55
+        const dx=c[0]-h[0],dy=c[1]-h[1],dr=Math.sqrt(dx*dx+dy*dy)*0.32;
         const arc=`M${h[0]},${h[1]} A${dr},${dr} 0 0,1 ${c[0]},${c[1]}`;
-        if (isSel) g.append("path").attr("d",arc).attr("fill","none").attr("stroke",`${T.orange}55`).attr("stroke-width",8);
-        g.append("path").attr("d",arc).attr("fill","none").attr("stroke",isSel?T.orange:col).attr("stroke-width",isSel?2.5:1.6).attr("stroke-opacity",isSel?1:0.82).style("cursor","pointer")
+        if (isSel) g.append("path").attr("d",arc).attr("fill","none").attr("stroke",`${T.orange}40`).attr("stroke-width",10);
+        g.append("path").attr("d",arc).attr("fill","none")
+          .attr("stroke",isSel?T.orange:col)
+          .attr("stroke-width",isSel?2.5:arcWidth)
+          .attr("stroke-opacity",isSel?1:arcOpacity)
+          .style("cursor","pointer")
           .on("mouseover",function(ev){d3.select(this).attr("stroke-width",3).attr("stroke-opacity",1);setTooltip({x:ev.offsetX,y:ev.offsetY,a,dist:Math.round(dist)});})
-          .on("mouseout",function(){d3.select(this).attr("stroke-width",isSel?2.5:1.6).attr("stroke-opacity",isSel?1:0.82);setTooltip(null);})
+          .on("mouseout",function(){d3.select(this).attr("stroke-width",isSel?2.5:arcWidth).attr("stroke-opacity",isSel?1:arcOpacity);setTooltip(null);})
           .on("click",ev=>{ev.stopPropagation();onAthleteClick(a);});
-        const sz=isSel?5.5:3.5;
-        g.append("circle").attr("cx",h[0]).attr("cy",h[1]).attr("r",sz).attr("fill",col).attr("stroke","#FFFFFF").attr("stroke-width",1.5).attr("opacity",0.95);
-        const s=isSel?7:5;
-        g.append("rect").attr("x",c[0]-s/2).attr("y",c[1]-s/2).attr("width",s).attr("height",s).attr("fill",col).attr("stroke","#FFFFFF").attr("stroke-width",1.5).attr("opacity",0.95).attr("rx",1);
+        const sz=isSel?5.5:3.2;
+        g.append("circle").attr("cx",h[0]).attr("cy",h[1]).attr("r",sz).attr("fill",col).attr("stroke","#FFFFFF").attr("stroke-width",1.2).attr("opacity",0.9);
+        const s=isSel?7:4.5;
+        g.append("rect").attr("x",c[0]-s/2).attr("y",c[1]-s/2).attr("width",s).attr("height",s).attr("fill",col).attr("stroke","#FFFFFF").attr("stroke-width",1.2).attr("opacity",0.9).attr("rx",1);
       });
     } else {
       athletes.forEach(a=>{
@@ -856,23 +862,17 @@ function applyFilters(athletes, filters, search="", performanceRanges={}) {
 function HeatmapPanel({athletes}) {
   const [rankTab, setRankTab] = useState("cities");
 
-  // Filter athletes where hometown = college city (data pollution like "Chestnut Hill, MA" = Boston College)
-  const realHomers = useMemo(() =>
-    athletes.filter(a => a.hometownCoords && a.collegeCoords &&
-      haversine(a.hometownCoords, a.collegeCoords) > 5),
-    [athletes]);
-
-  const allCities = useMemo(() => {
+  const allCityData = useMemo(() => {
     const map={};
-    realHomers.forEach(a=>{if(!a.hometown)return;if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
+    athletes.forEach(a=>{if(!a.hometown||!a.hometownCoords)return;if(!map[a.hometown])map[a.hometown]={city:a.hometown,count:0};map[a.hometown].count++;});
     return Object.values(map).sort((a,b)=>b.count-a.count);
-  }, [realHomers]);
-  const topCities = useMemo(() => allCities.slice(0,20), [allCities]);
+  }, [athletes]);
+  const topCities = allCityData.slice(0,20);
 
   const topStates = useMemo(() => {
     const map={};
-    realHomers.forEach(a=>{
-      if(!a.hometown)return;
+    athletes.forEach(a=>{
+      if(!a.hometown||!a.hometownCoords)return;
       const st=getState(a.hometown); if(!st) return;
       if(!map[st]) map[st]={abbr:st,name:STATE_NAMES[st]||st,count:0,cities:new Set()};
       map[st].count++; map[st].cities.add(a.hometown);
@@ -881,8 +881,8 @@ function HeatmapPanel({athletes}) {
   }, [athletes]);
 
   const uniqueStateCount = useMemo(() => {
-    const s=new Set(); realHomers.forEach(a=>{const st=getState(a.hometown);if(st)s.add(st);}); return s.size;
-  }, [realHomers]);
+    const s=new Set(); athletes.forEach(a=>{const st=getState(a.hometown);if(st)s.add(st);}); return s.size;
+  }, [athletes]);
 
   return (
     <div style={{padding:"14px",height:"100%",overflowY:"auto"}}>
@@ -895,14 +895,14 @@ function HeatmapPanel({athletes}) {
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
           <StatCard label="Athletes" value={athletes.length} color={T.orange}/>
-          <StatCard label="Cities" value={allCities.length} color={T.blueL}/>
+          <StatCard label="Cities" value={allCityData.length} color={T.blueL}/>
           <StatCard label="States" value={uniqueStateCount} color={T.blueM}/>
         </div>
       </div>
       <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
         <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:7}}>Density Scale</div>
         <div style={{display:"flex",height:10,borderRadius:4,overflow:"hidden",marginBottom:5}}>
-          <div style={{flex:1,background:"linear-gradient(to right,#FFF8F4,#F3BC9F,#CA6038,#880302)",borderRadius:4}}/>
+          <div style={{flex:1,background:"linear-gradient(to right,#FFF8F4,#F4C09E,#CA6038,#8A0202)",borderRadius:4}}/>
         </div>
         <div style={{display:"flex",justifyContent:"space-between"}}>
           <span style={{color:T.dim,fontSize:9}}>Sparse</span>
@@ -1541,11 +1541,7 @@ export default function App() {
 
   // ── Filtered list — depends on athletes state ──────────────────────────────
   const filtered = useMemo(() => applyFilters(athletes, filters, search, performanceRanges), [athletes, filters, search, performanceRanges]);
-  // Exclude athletes where hometown ≈ college city (data quality: college stored as hometown)
-  const overallAvg = useMemo(() => {
-    const valid=filtered.filter(a=>a.hometownCoords&&a.collegeCoords&&haversine(a.hometownCoords,a.collegeCoords)>5);
-    return valid.length ? Math.round(valid.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/valid.length) : 0;
-  }, [filtered]);
+  const overallAvg = useMemo(() => { const withCoords=filtered.filter(a=>a.hometownCoords); return withCoords.length ? Math.round(withCoords.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/withCoords.length) : 0; }, [filtered]);
   const hasFilters = filters.events.length>0||filters.conference||filters.college||filters.hsYear||filters.collegeYear||search||filters.season!=="all"||selectedStates.length>0;
 
   const handleAthleteClick = a => { setSelectedAthlete(s=>s?.id===a.id?null:a); setRightTab("athlete"); };
@@ -1673,7 +1669,7 @@ export default function App() {
                 <div>
                   <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Hometown Density</div>
                   <div style={{display:"flex",gap:3,alignItems:"center",marginBottom:4}}>
-                    <div style={{height:7,borderRadius:3,background:"linear-gradient(to right,#FFF8F4,#F3BC9F,#CA6038,#880302)"}}/>
+                    <div style={{height:7,borderRadius:3,background:"linear-gradient(to right,#FFF8F4,#F4C09E,#CA6038,#8A0202)"}}/>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:T.dim,fontSize:9}}>Low</span><span style={{color:T.dim,fontSize:9}}>High</span></div>
                   <div style={{color:T.muted,fontSize:9,marginTop:4}}>{filtered.length} athletes shown</div>
