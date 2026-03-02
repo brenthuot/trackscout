@@ -417,8 +417,6 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     const sc=document.createElement("script"); sc.src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"; sc.onload=()=>load(window.topojson); document.head.appendChild(sc);
   }, []);
 
-  }, []);
-
   useEffect(() => {
     if (!geo || !svgRef.current) return;
     const svg=d3.select(svgRef.current);
