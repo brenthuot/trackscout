@@ -364,83 +364,43 @@ const distLabel = d => !d ? "Unknown" : d<100?"Local (<100 mi)":d<400?"Regional 
 
 // ── HEATMAP CANVAS ────────────────────────────────────────────────────────────
 function drawHeatmap(canvas, athletes, projection) {
-  if (!canvas || !projection || athletes.length === 0) return;
-  const W = canvas.width, H = canvas.height;
-  if (W < 50 || H < 50) return;
+  try {
+    if (!canvas || !projection || !athletes || athletes.length === 0) return;
+    const W = canvas.width, H = canvas.height;
+    if (!W || !H || W < 10 || H < 10) return;
 
-  const pts = athletes
-    .filter(a => a.hometownCoords)
-    .map(a => projection([a.hometownCoords[1], a.hometownCoords[0]]))
-    .filter(Boolean);
-  if (!pts.length) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, W, H);
 
-  // GPU-accelerated approach: draw dots then apply browser blur filter
-  // This is ~1000x faster than manual gaussian for large datasets
-  const off = document.createElement("canvas");
-  off.width = W; off.height = H;
-  const octx = off.getContext("2d");
+    const pts = athletes
+      .filter(a => a && a.hometownCoords)
+      .map(a => { try { return projection([a.hometownCoords[1], a.hometownCoords[0]]); } catch(e) { return null; } })
+      .filter(p => p && isFinite(p[0]) && isFinite(p[1]) && p[0] > 0 && p[1] > 0 && p[0] < W && p[1] < H);
 
-  // Dot radius: smaller when more athletes (they cluster naturally)
-  const dotR = pts.length > 1000 ? 4 : pts.length > 300 ? 6 : 9;
-  octx.fillStyle = "rgba(0,0,0,1)";
-  pts.forEach(([px, py]) => {
-    octx.beginPath();
-    octx.arc(px, py, dotR, 0, Math.PI * 2);
-    octx.fill();
-  });
+    if (!pts.length) return;
 
-  // Browser blur = GPU gaussian spread — instant for any dataset size
-  const blurPx = pts.length > 1000 ? 28 : pts.length > 300 ? 36 : 48;
-  const tmp = document.createElement("canvas");
-  tmp.width = W; tmp.height = H;
-  const tctx = tmp.getContext("2d");
-  tctx.filter = `blur(${blurPx}px)`;
-  tctx.drawImage(off, 0, 0);
-  tctx.filter = "none";
+    // Draw warm radial gradient blobs — no offscreen canvas, no filter API, no getImageData
+    // Overlapping gradients with "lighter" composite naturally darken dense areas
+    ctx.globalCompositeOperation = "source-over";
+    const R = Math.max(25, Math.round(W * 0.048));
 
-  // Read density from blurred canvas, colorise with warm palette
-  const raw = tctx.getImageData(0, 0, W, H).data;
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, W, H);
-  const img = ctx.createImageData(W, H);
+    pts.forEach(([px, py]) => {
+      const g = ctx.createRadialGradient(px, py, 0, px, py, R);
+      g.addColorStop(0,   "rgba(210, 65, 15, 0.22)");
+      g.addColorStop(0.35,"rgba(210, 65, 15, 0.10)");
+      g.addColorStop(0.7, "rgba(240,120, 40, 0.04)");
+      g.addColorStop(1,   "rgba(240,120, 40, 0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(Math.max(0, px - R), Math.max(0, py - R),
+                   Math.min(R*2, W - Math.max(0, px-R)),
+                   Math.min(R*2, H - Math.max(0, py-R)));
+    });
 
-  // 99.5th percentile normalization via sampling
-  const samples = [];
-  for (let i = 0; i < raw.length; i += 4 * 8) samples.push(raw[i]);
-  samples.sort((a, b) => a - b);
-  const mx = samples[Math.floor(samples.length * 0.995)] || samples[samples.length - 1] || 1;
-
-  // Warm palette: [t, r, g, b, a]
-  const STOPS = [
-    [0.00, 255, 248, 244,   0],
-    [0.04, 255, 248, 244,  20],
-    [0.10, 252, 218, 196,  70],
-    [0.20, 242, 182, 150, 120],
-    [0.33, 224, 138,  98, 158],
-    [0.50, 198,  88,  48, 192],
-    [0.68, 166,  40,  14, 216],
-    [0.84, 132,  10,   2, 230],
-    [1.00,  92,   2,   0, 244],
-  ];
-  const lerp = (a, b, t) => a + (b - a) * t;
-
-  for (let i = 0; i < W * H; i++) {
-    const v = raw[i * 4];
-    if (v < 2) continue;
-    const t = Math.min(1, v / mx);
-    let s0 = STOPS[0], s1 = STOPS[1];
-    for (let k = 0; k < STOPS.length - 1; k++) {
-      if (t >= STOPS[k][0] && t <= STOPS[k + 1][0]) { s0 = STOPS[k]; s1 = STOPS[k + 1]; break; }
-    }
-    if (t > STOPS[STOPS.length - 1][0]) { s0 = STOPS[STOPS.length - 2]; s1 = STOPS[STOPS.length - 1]; }
-    const f = s1[0] === s0[0] ? 1 : (t - s0[0]) / (s1[0] - s0[0]);
-    const ii = i * 4;
-    img.data[ii]     = Math.round(lerp(s0[1], s1[1], f));
-    img.data[ii + 1] = Math.round(lerp(s0[2], s1[2], f));
-    img.data[ii + 2] = Math.round(lerp(s0[3], s1[3], f));
-    img.data[ii + 3] = Math.round(lerp(s0[4], s1[4], f));
+    ctx.globalCompositeOperation = "source-over";
+  } catch(e) {
+    console.error("drawHeatmap error:", e);
   }
-  ctx.putImageData(img, 0, 0);
 }
 
 
@@ -475,7 +435,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
   useEffect(() => {
     if (!geo || !svgRef.current) return;
     const svg=d3.select(svgRef.current);
-    const W=svgRef.current.clientWidth||960, H=svgRef.current.clientHeight||560;
+    const W=Math.max(100, svgRef.current.clientWidth||960), H=Math.max(100, svgRef.current.clientHeight||560);
     svg.selectAll("*").remove();
     const proj=d3.geoAlbersUsa().fitSize([W,H],geo);
     projRef.current=proj;
@@ -573,12 +533,24 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
   }, [geo,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates,dims]);
 
   useEffect(() => {
-    if (!canvasRef.current) return;
-    if (mapMode !== "heatmap" || !projRef.current) {
-      canvasRef.current.getContext("2d").clearRect(0,0,canvasRef.current.width,canvasRef.current.height);
-      return;
+    try {
+      if (!canvasRef.current) return;
+      const ctx = canvasRef.current.getContext("2d");
+      if (!ctx) return;
+      if (mapMode !== "heatmap" || !projRef.current) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        return;
+      }
+      // Sync canvas pixel dims to actual display size before drawing
+      const rect = canvasRef.current.getBoundingClientRect();
+      if (rect.width > 50 && rect.height > 50) {
+        canvasRef.current.width = Math.round(rect.width);
+        canvasRef.current.height = Math.round(rect.height);
+      }
+      drawHeatmap(canvasRef.current, athletes, projRef.current);
+    } catch(e) {
+      console.error("Heatmap useEffect error:", e);
     }
-    drawHeatmap(canvasRef.current, athletes, projRef.current);
   }, [mapMode, athletes, geo, dims]);
 
   return (
