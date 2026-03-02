@@ -1,0 +1,38 @@
+name: Athletic.net Backfill (Production)
+
+on:
+  workflow_dispatch:
+    inputs:
+      group:
+        description: "Conference group (1-6 or all)"
+        required: true
+        default: "1"
+      limit:
+        description: "Max athletes (leave blank for all)"
+        required: false
+        default: ""
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 lxml supabase
+
+      - name: Run backfill
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          LIMIT_ARG=""
+          if [ -n "${{ github.event.inputs.limit }}" ]; then
+            LIMIT_ARG="--limit ${{ github.event.inputs.limit }}"
+          fi
+          python scraper/athletic_net_scraper.py --group ${{ github.event.inputs.group }} $LIMIT_ARG
