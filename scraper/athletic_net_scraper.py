@@ -221,38 +221,62 @@ def scrape_profile(url: str, expected_name: str, hs_grad_year: int | None) -> di
             log.info(f"    Name mismatch: expected '{expected_name}', title='{page_title}'")
             return None
 
-    # ── Extract hometown ─────────────────────────────────────────────────────
+    # ── Extract hometown/state/HS from static HTML + embedded JSON ──────────
     hometown = ""
     hometown_state = ""
-    for text in soup.stripped_strings:
-        t = text.strip()
-        m = re.match(r'^([\w\s\.\'\-]{2,40}),\s+([A-Z]{2})$', t)
-        if m and m.group(2) in US_STATES:
-            hometown = t
-            hometown_state = m.group(2)
-            break
-    if not hometown:
-        m = re.search(r'\b([\w\s\.\'\-]{2,30}),\s+([A-Z]{2})\b', page_text)
-        if m and m.group(2) in US_STATES:
-            hometown = m.group(0).strip()
-            hometown_state = m.group(2)
-
-    # ── Extract high school ──────────────────────────────────────────────────
     high_school = ""
-    for tag in soup.find_all(["h3", "h4", "a", "span", "td", "li", "p"]):
-        t = tag.get_text(strip=True)
-        if 5 <= len(t) <= 80 and re.search(r'\b(High School|High|Academy|Prep|School)\b', t, re.I):
-            cleaned = re.sub(r'\s+', ' ', t).strip()
-            if cleaned not in ("High School", "HS", "School", "Academy", "Prep"):
-                high_school = cleaned[:80]
-                break
-    if not high_school:
-        m = re.search(
-            r'(?:School|Team)[\s:–]+([A-Z][A-Za-z\s\.\-\']{2,50}(?:High|HS|Academy|Prep|School)[A-Za-z\s\.\-\']*)',
-            page_text
-        )
+
+    # 1. State is in the page title: "Name - ST Track and Field Bio"
+    title_state = re.search(r'-\s+([A-Z]{2})\s+Track and Field Bio', page_title)
+    if title_state and title_state.group(1) in US_STATES:
+        hometown_state = title_state.group(1)
+
+    # 2. Look for embedded JSON data in <script> tags (athletic.net inlines profile data)
+    profile_json = {}
+    for script in soup.find_all("script"):
+        src = script.string or ""
+        # Look for patterns like window.__INITIAL_STATE__, __NEXT_DATA__, or similar
+        for pattern in [
+            r'window\.__(?:INITIAL_STATE|STATE|DATA|PRELOADED_STATE)__\s*=\s*({.+?})(?:;|\n)',
+            r'"athlete"\s*:\s*({[^}]{20,500}})',
+            r'"hometown"\s*:\s*"([^"]+)"',
+            r'"highSchool"\s*:\s*"([^"]+)"',
+            r'"school"\s*:\s*"([^"]+)"',
+            r'"city"\s*:\s*"([^"]+)"',
+        ]:
+            m = re.search(pattern, src, re.DOTALL)
+            if m:
+                val = m.group(1)
+                if '"hometown"' in pattern:
+                    hometown = val.strip()
+                elif '"highSchool"' in pattern or '"school"' in pattern:
+                    if not high_school:
+                        high_school = val.strip()[:80]
+                elif '"city"' in pattern:
+                    if not hometown:
+                        hometown = val.strip()
+                elif val.startswith("{"):
+                    try:
+                        import json
+                        data = json.loads(val)
+                        hometown = hometown or data.get("hometown", data.get("city", ""))
+                        high_school = high_school or data.get("highSchool", data.get("school", ""))[:80] if data.get("highSchool", data.get("school", "")) else ""
+                    except Exception:
+                        pass
+
+    # 3. Fall back to scanning visible text for City, ST patterns
+    if not hometown:
+        page_text = soup.get_text(" ", strip=True)
+        m = re.search(r'\b([\w\s\.\'\-]{2,30}),\s+(' + '|'.join(US_STATES) + r')\b', page_text)
         if m:
-            high_school = m.group(1).strip()[:80]
+            hometown = m.group(0).strip()
+            hometown_state = hometown_state or m.group(2)
+
+    # Combine hometown with state if we have state but no full hometown
+    if hometown_state and not hometown:
+        hometown = hometown_state  # at minimum store the state code
+
+    log.info(f"    hometown={hometown!r}, state={hometown_state!r}, HS={high_school!r}")
 
     # ── Extract HS performances from results tables ──────────────────────────
     performances = []
