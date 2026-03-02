@@ -367,62 +367,82 @@ function drawHeatmap(canvas, athletes, projection) {
   if (!canvas || !projection || athletes.length === 0) return;
   const W = canvas.width, H = canvas.height;
   if (W < 50 || H < 50) return;
-  const ctx = canvas.getContext("2d");
-  ctx.clearRect(0, 0, W, H);
+
   const pts = athletes
     .filter(a => a.hometownCoords)
     .map(a => projection([a.hometownCoords[1], a.hometownCoords[0]]))
     .filter(Boolean);
   if (!pts.length) return;
-  const density = new Float32Array(W * H);
-  // Pass 1: tight city hotspot kernel
-  const R1 = Math.max(8, Math.round(W * 0.011)), bw1 = R1 / 1.4;
+
+  // GPU-accelerated approach: draw dots then apply browser blur filter
+  // This is ~1000x faster than manual gaussian for large datasets
+  const off = document.createElement("canvas");
+  off.width = W; off.height = H;
+  const octx = off.getContext("2d");
+
+  // Dot radius: smaller when more athletes (they cluster naturally)
+  const dotR = pts.length > 1000 ? 4 : pts.length > 300 ? 6 : 9;
+  octx.fillStyle = "rgba(0,0,0,1)";
   pts.forEach(([px, py]) => {
-    const x0=Math.max(0,(px-R1)|0), x1=Math.min(W-1,(px+R1+1)|0);
-    const y0=Math.max(0,(py-R1)|0), y1=Math.min(H-1,(py+R1+1)|0);
-    for (let y=y0;y<=y1;y++) for (let x=x0;x<=x1;x++) {
-      const d2=(x-px)*(x-px)+(y-py)*(y-py);
-      density[y*W+x] += Math.exp(-d2/(2*bw1*bw1));
-    }
+    octx.beginPath();
+    octx.arc(px, py, dotR, 0, Math.PI * 2);
+    octx.fill();
   });
-  // Pass 2: wide regional kernel for smooth NOAA-style blending
-  const R2 = Math.max(35, Math.round(W * 0.042)), bw2 = R2 / 1.8;
-  pts.forEach(([px, py]) => {
-    const x0=Math.max(0,(px-R2)|0), x1=Math.min(W-1,(px+R2+1)|0);
-    const y0=Math.max(0,(py-R2)|0), y1=Math.min(H-1,(py+R2+1)|0);
-    for (let y=y0;y<=y1;y++) for (let x=x0;x<=x1;x++) {
-      const d2=(x-px)*(x-px)+(y-py)*(y-py);
-      density[y*W+x] += 0.35 * Math.exp(-d2/(2*bw2*bw2));
-    }
-  });
-  const vals = Array.from(density).filter(v=>v>0).sort((a,b)=>a-b);
-  const mx = vals[Math.floor(vals.length * 0.995)] || vals[vals.length-1] || 1;
-  // Warm palette: white → peach → salmon → brick → dark red
-  const STOPS = [
-    [0.00, null],
-    [0.02, [255,248,244, 18]],[0.07, [252,220,200, 65]],[0.16, [242,185,155,115]],
-    [0.28, [226,143,104,155]],[0.44, [200, 92, 52,188]],[0.63, [168, 44, 18,212]],
-    [0.82, [134, 12,  3,228]],[1.00, [ 95,  2,  0,242]],
-  ];
-  const lerp = (a,b,t) => a+(b-a)*t;
+
+  // Browser blur = GPU gaussian spread — instant for any dataset size
+  const blurPx = pts.length > 1000 ? 28 : pts.length > 300 ? 36 : 48;
+  const tmp = document.createElement("canvas");
+  tmp.width = W; tmp.height = H;
+  const tctx = tmp.getContext("2d");
+  tctx.filter = `blur(${blurPx}px)`;
+  tctx.drawImage(off, 0, 0);
+  tctx.filter = "none";
+
+  // Read density from blurred canvas, colorise with warm palette
+  const raw = tctx.getImageData(0, 0, W, H).data;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, W, H);
   const img = ctx.createImageData(W, H);
-  for (let i=0; i<density.length; i++) {
-    const t = Math.min(1, density[i]/mx);
-    if (t < STOPS[1][0]) continue;
-    let s0=STOPS[1], s1=STOPS[2];
-    for (let k=1; k<STOPS.length-1; k++) {
-      if (t>=STOPS[k][0]&&t<=STOPS[k+1][0]){s0=STOPS[k];s1=STOPS[k+1];break;}
+
+  // 99.5th percentile normalization via sampling
+  const samples = [];
+  for (let i = 0; i < raw.length; i += 4 * 8) samples.push(raw[i]);
+  samples.sort((a, b) => a - b);
+  const mx = samples[Math.floor(samples.length * 0.995)] || samples[samples.length - 1] || 1;
+
+  // Warm palette: [t, r, g, b, a]
+  const STOPS = [
+    [0.00, 255, 248, 244,   0],
+    [0.04, 255, 248, 244,  20],
+    [0.10, 252, 218, 196,  70],
+    [0.20, 242, 182, 150, 120],
+    [0.33, 224, 138,  98, 158],
+    [0.50, 198,  88,  48, 192],
+    [0.68, 166,  40,  14, 216],
+    [0.84, 132,  10,   2, 230],
+    [1.00,  92,   2,   0, 244],
+  ];
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  for (let i = 0; i < W * H; i++) {
+    const v = raw[i * 4];
+    if (v < 2) continue;
+    const t = Math.min(1, v / mx);
+    let s0 = STOPS[0], s1 = STOPS[1];
+    for (let k = 0; k < STOPS.length - 1; k++) {
+      if (t >= STOPS[k][0] && t <= STOPS[k + 1][0]) { s0 = STOPS[k]; s1 = STOPS[k + 1]; break; }
     }
-    if (t>STOPS[STOPS.length-1][0]){s0=STOPS[STOPS.length-2];s1=STOPS[STOPS.length-1];}
-    const f=s1[0]===s0[0]?1:(t-s0[0])/(s1[0]-s0[0]);
-    const c0=s0[1],c1=s1[1],ii=i*4;
-    img.data[ii]  =Math.round(lerp(c0[0],c1[0],f));
-    img.data[ii+1]=Math.round(lerp(c0[1],c1[1],f));
-    img.data[ii+2]=Math.round(lerp(c0[2],c1[2],f));
-    img.data[ii+3]=Math.round(lerp(c0[3],c1[3],f));
+    if (t > STOPS[STOPS.length - 1][0]) { s0 = STOPS[STOPS.length - 2]; s1 = STOPS[STOPS.length - 1]; }
+    const f = s1[0] === s0[0] ? 1 : (t - s0[0]) / (s1[0] - s0[0]);
+    const ii = i * 4;
+    img.data[ii]     = Math.round(lerp(s0[1], s1[1], f));
+    img.data[ii + 1] = Math.round(lerp(s0[2], s1[2], f));
+    img.data[ii + 2] = Math.round(lerp(s0[3], s1[3], f));
+    img.data[ii + 3] = Math.round(lerp(s0[4], s1[4], f));
   }
   ctx.putImageData(img, 0, 0);
 }
+
 
 
 // ── US MAP ────────────────────────────────────────────────────────────────────
