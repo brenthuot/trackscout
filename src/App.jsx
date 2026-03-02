@@ -212,7 +212,7 @@ const CITY_COORDS = {
   "Helena, MT":[46.596,-112.027],"Idaho Falls, ID":[43.492,-112.034],"Fort Wayne, IN":[41.130,-85.128],
   "Harrisonburg, VA":[38.436,-78.869],"Morgantown, WV":[39.634,-79.956],"Norfolk, VA":[36.851,-76.286],
   "Fredericksburg, VA":[38.304,-77.461],"Conway, AR":[35.089,-92.442],"Jonesboro, AR":[35.842,-90.704],
-  "Fayetteville, AR":[36.062,-94.158],"Florence, AL":[34.800,-87.677],"Troy, AL":[31.810,-85.969],
+  "Florence, AL":[34.800,-87.677],"Troy, AL":[31.810,-85.969],
   "Albany, GA":[31.579,-84.156],"Valdosta, GA":[30.833,-83.278],"Abilene, TX":[32.449,-99.733],
   "Tyler, TX":[32.351,-95.301],"Beaumont, TX":[30.086,-94.102],"Plano, TX":[33.020,-96.700],
   "Clarksville, TN":[36.530,-87.360],"Owensboro, KY":[37.774,-87.113],"Midland, TX":[31.997,-102.078],
@@ -1596,7 +1596,7 @@ export default function App() {
                 <div>
                   <div style={{color:T.muted,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Hometown Density</div>
                   <div style={{display:"flex",gap:3,alignItems:"center",marginBottom:4}}>
-                    <div style={{height:7,borderRadius:3,background:"linear-gradient(to right,#FFF8F4,#F4BF9C,#C85C35,#880202)"}}/> style={{width:22,height:7,background:c,borderRadius:1}}/>)}
+                    <div style={{height:7,borderRadius:3,background:"linear-gradient(to right,#FFF8F4,#F4BF9C,#C85C35,#880202)"}}/>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:T.dim,fontSize:9}}>Low</span><span style={{color:T.dim,fontSize:9}}>High</span></div>
                   <div style={{color:T.muted,fontSize:9,marginTop:4}}>{filtered.length} athletes shown</div>
