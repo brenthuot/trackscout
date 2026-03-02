@@ -14,7 +14,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 lxml supabase
+        run: |
+          pip install playwright supabase
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Run test (5 athletes)
         env:
