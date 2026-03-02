@@ -98,10 +98,18 @@ def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
 
     try:
         log.info(f"  [Search] {name} → {search_url}")
-        page.goto(search_url, wait_until="networkidle", timeout=30000)
-        time.sleep(2)  # let Angular finish rendering
+        page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
 
-        # Grab all athlete profile links from rendered page
+        # Wait for Angular to process the hash and render athlete links
+        try:
+            page.wait_for_selector("a[href*='/athlete/']", timeout=10000)
+        except PlaywrightTimeout:
+            log.info(f"  [Search] No athlete links appeared after 10s — no results")
+            return []
+
+        # Small extra buffer for all results to render
+        time.sleep(1)
+
         links = page.eval_on_selector_all(
             "a[href*='/athlete/']",
             "els => els.map(e => e.href)"
@@ -131,8 +139,14 @@ def scrape_profile(page, url: str, expected_name: str) -> dict | None:
     """Load a fully rendered athletic.net profile page and extract all data."""
     try:
         log.info(f"  [Profile] Loading {url}")
-        page.goto(url, wait_until="networkidle", timeout=30000)
-        time.sleep(2)
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        # Wait for Angular to render the athlete name/bio
+        try:
+            page.wait_for_selector("h1, h2, title", timeout=10000)
+        except PlaywrightTimeout:
+            pass
+        time.sleep(2)  # extra buffer for full render
 
         # ── Verify name ──────────────────────────────────────────────────────
         title = page.title()
