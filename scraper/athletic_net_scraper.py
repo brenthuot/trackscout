@@ -93,7 +93,7 @@ def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
     """Search athletic.net for athlete, return list of profile URLs."""
     from urllib.parse import quote
     # Properly encode the full query including quotes
-    query = f'"{name}"'
+    query = name
     if hs_grad_year:
         query += f' {hs_grad_year}'
     encoded_query = quote(query)  # encodes quotes as %22, spaces as %20
