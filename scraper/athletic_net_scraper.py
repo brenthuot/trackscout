@@ -91,10 +91,13 @@ def parse_mark(s: str) -> float | None:
 # ── PLAYWRIGHT SEARCH ─────────────────────────────────────────────────────────
 def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
     """Search athletic.net for athlete, return list of profile URLs."""
+    from urllib.parse import quote
+    # Properly encode the full query including quotes
     query = f'"{name}"'
     if hs_grad_year:
         query += f' {hs_grad_year}'
-    search_url = f"https://www.athletic.net/search#?q={query.replace(' ', '%20')}&sport=tf"
+    encoded_query = quote(query)  # encodes quotes as %22, spaces as %20
+    search_url = f"https://www.athletic.net/search#?q={encoded_query}&sport=tf"
 
     try:
         log.info(f"  [Search] {name} → {search_url}")
@@ -102,12 +105,21 @@ def search_athlete(page, name: str, hs_grad_year: int | None) -> list[str]:
 
         # Wait for Angular to process the hash and render athlete links
         try:
-            page.wait_for_selector("a[href*='/athlete/']", timeout=10000)
+            page.wait_for_selector("a[href*='/athlete/']", timeout=12000)
         except PlaywrightTimeout:
-            log.info(f"  [Search] No athlete links appeared after 10s — no results")
+            # Take a screenshot to see what's on the page
+            try:
+                page.screenshot(path=f"/tmp/search_debug_{name.replace(' ','_')}.png")
+                log.info(f"  [Search] Screenshot saved. Page title: {page.title()!r}")
+                log.info(f"  [Search] Page URL: {page.url!r}")
+                # Log first 500 chars of visible text
+                body = page.inner_text("body")[:500]
+                log.info(f"  [Search] Body text: {body!r}")
+            except Exception:
+                pass
+            log.info(f"  [Search] No athlete links appeared after 12s — no results")
             return []
 
-        # Small extra buffer for all results to render
         time.sleep(1)
 
         links = page.eval_on_selector_all(
@@ -394,8 +406,10 @@ def run(group: str = "all", limit: int = 99999, process_all: bool = False):
         try:
             page.goto("https://www.athletic.net", wait_until="domcontentloaded", timeout=20000)
             time.sleep(2)
-        except Exception:
-            pass
+            page.screenshot(path="/tmp/search_debug_warmup.png")
+            log.info(f"  Warmup page title: {page.title()!r}")
+        except Exception as e:
+            log.warning(f"  Warmup failed: {e}")
 
         for i, athlete in enumerate(to_process[:limit]):
             if i > 0 and i % 25 == 0:
