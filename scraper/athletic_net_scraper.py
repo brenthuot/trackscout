@@ -26,7 +26,7 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-RATE_LIMIT = 6.0   # seconds between requests (DDG needs breathing room)
+RATE_LIMIT = 30.0  # DDG Lite allows ~2 req/min; 30s keeps us safely under threshold
 
 GOOGLE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -138,11 +138,17 @@ def google_find_anet_url(name: str, hs_grad_year: int | None) -> list[str]:
             _google_blocked = True
             return []
 
-        # 202 = DDG throttling. Skip this athlete — it will be caught on rerun.
+        # 202 = DDG throttling. Wait and retry once.
         if r.status_code == 202:
-            log.warning("  [DDG] Got 202 (throttled) — skipping athlete")
-            time.sleep(15)  # brief cooldown before next athlete
-            return []
+            log.warning("  [DDG] Got 202 (throttled) — waiting 60s then retrying")
+            time.sleep(60)
+            r = requests.get(url, headers=GOOGLE_HEADERS, params=params, timeout=20)
+            log.info(f"  [DDG] Retry status: {r.status_code}")
+            if r.status_code not in (200, 202):
+                return []
+            if r.status_code == 202:
+                log.warning("  [DDG] Still 202 after retry — skipping athlete")
+                return []
 
         if r.status_code not in (200, 202):
             log.warning(f"  [DDG] HTTP {r.status_code}")
@@ -277,7 +283,6 @@ def scrape_profile(url: str, expected_name: str, hs_grad_year: int | None) -> di
         hometown = hometown_state  # at minimum store the state code
 
     log.info(f"    hometown={hometown!r}, state={hometown_state!r}, HS={high_school!r}")
-
     # ── Extract HS performances from results tables ──────────────────────────
     performances = []
     current_year = None
