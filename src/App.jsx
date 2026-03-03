@@ -543,50 +543,75 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
 
     if (mapMode === "heatmap") {
       if (!counties) return;
-      // Build count per county using unique coords (fast: ~106 cities × 3100 counties)
-      const coordCounts = {};
+
+      // Build abbr→stateFIPS reverse map from existing FIPS_ABBR
+      const abbrToFips = {};
+      Object.entries(FIPS_ABBR).forEach(([fips, abbr]) => { abbrToFips[abbr] = fips; });
+
+      // Group athletes by state, accumulate counts per unique hometown coord
+      // Key insight: filter counties by state FIPS prefix → ~50 checks per city, not 3100
+      const byState = {}; // abbr → { [coordKey]: { coords, n } }
       athletes.forEach(a => {
-        if (!a.hometownCoords) return;
+        if (!a.hometownCoords || !a.hometown) return;
+        const m = a.hometown.match(/,\s*([A-Z]{2})$/);
+        if (!m) return;
+        const abbr = m[1];
+        if (!byState[abbr]) byState[abbr] = {};
         const key = a.hometownCoords[0] + "," + a.hometownCoords[1];
-        coordCounts[key] = (coordCounts[key] || { coords: a.hometownCoords, n: 0 });
-        coordCounts[key].n++;
+        if (!byState[abbr][key]) byState[abbr][key] = { coords: a.hometownCoords, n: 0 };
+        byState[abbr][key].n++;
       });
+
+      // Build county lookup: stateFips → array of county features
+      const countiesByState = {};
+      counties.features.forEach(f => {
+        const sfips = String(f.id).padStart(5,"0").slice(0,2);
+        if (!countiesByState[sfips]) countiesByState[sfips] = [];
+        countiesByState[sfips].push(f);
+      });
+
+      // Assign each city to its county using geoContains on ~50 candidates
       const countyCount = {};
-      Object.values(coordCounts).forEach(({ coords, n }) => {
-        for (const county of counties.features) {
-          if (d3.geoContains(county, [coords[1], coords[0]])) {
-            countyCount[county.id] = (countyCount[county.id] || 0) + n;
-            break;
+      Object.entries(byState).forEach(([abbr, cities]) => {
+        const sfips = abbrToFips[abbr];
+        if (!sfips) return;
+        const candidates = countiesByState[sfips] || [];
+        Object.values(cities).forEach(({ coords, n }) => {
+          const lng = coords[1], lat = coords[0];
+          for (const county of candidates) {
+            if (d3.geoContains(county, [lng, lat])) {
+              countyCount[county.id] = (countyCount[county.id] || 0) + n;
+              break;
+            }
           }
-        }
+        });
       });
+
       const counts = Object.values(countyCount).filter(v => v > 0);
       if (!counts.length) return;
       counts.sort((a,b) => a-b);
       const mx = counts[Math.floor(counts.length * 0.98)] || counts[counts.length-1];
-      const GAMMA = 0.4;
-      // Warm palette matching density scale
-      const palette = (t) => {
+      const GAMMA = 0.45;
+
+      const palette = t => {
         const stops = [
-          [0,   [230,220,210]],
-          [0.15,[255,230,180]],
-          [0.30,[252,175, 80]],
-          [0.48,[240,105, 22]],
-          [0.65,[216, 46,  4]],
-          [0.82,[170, 12,  1]],
-          [1.0, [108,  0,  0]],
+          [0,    [230,220,210]],
+          [0.12, [255,228,170]],
+          [0.28, [252,172, 75]],
+          [0.46, [240,102, 20]],
+          [0.64, [215, 44,  3]],
+          [0.82, [168, 10,  1]],
+          [1.0,  [106,  0,  0]],
         ];
         let s0=stops[0], s1=stops[1];
         for (let k=0;k<stops.length-1;k++) {
           if (t>=stops[k][0]&&t<=stops[k+1][0]){s0=stops[k];s1=stops[k+1];break;}
         }
-        if (t>=stops[stops.length-1][0]) {s0=stops[stops.length-2];s1=stops[stops.length-1];}
+        if (t>=stops[stops.length-1][0]){s0=stops[stops.length-2];s1=stops[stops.length-1];}
         const f=s1[0]===s0[0]?1:(t-s0[0])/(s1[0]-s0[0]);
-        const r=Math.round(s0[1][0]+(s1[1][0]-s0[1][0])*f);
-        const gg=Math.round(s0[1][1]+(s1[1][1]-s0[1][1])*f);
-        const b=Math.round(s0[1][2]+(s1[1][2]-s0[1][2])*f);
-        return `rgb(${r},${gg},${b})`;
+        return `rgb(${Math.round(s0[1][0]+(s1[1][0]-s0[1][0])*f)},${Math.round(s0[1][1]+(s1[1][1]-s0[1][1])*f)},${Math.round(s0[1][2]+(s1[1][2]-s0[1][2])*f)})`;
       };
+
       g.selectAll("path.county")
         .data(counties.features)
         .enter().append("path")
@@ -595,11 +620,10 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
         .attr("fill", d => {
           const n = countyCount[d.id] || 0;
           if (n === 0) return "#E6E7EE";
-          const t = Math.pow(n / mx, GAMMA);
-          return palette(Math.min(1, t));
+          return palette(Math.min(1, Math.pow(n / mx, GAMMA)));
         })
-        .attr("stroke","rgba(255,255,255,0.18)")
-        .attr("stroke-width", 0.3);
+        .attr("stroke","rgba(255,255,255,0.25)")
+        .attr("stroke-width", 0.4);
       return;
     }
 
