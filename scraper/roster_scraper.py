@@ -283,12 +283,105 @@ def parse_hometown(raw: str) -> str | None:
     return f"{city}, {abbr}"
 
 
+
+# ── State abbreviation helpers ─────────────────────────────────────────────
+
+# Dotted abbreviations used on rosters → 2-letter postal codes
+DOTTED_TO_STATE = {
+    "Ala": "AL", "Ariz": "AZ", "Ark": "AR", "Calif": "CA", "Colo": "CO",
+    "Conn": "CT", "Del": "DE", "Fla": "FL", "Ga": "GA", "Ill": "IL",
+    "Ind": "IN", "Kan": "KS", "Ky": "KY", "La": "LA", "Md": "MD",
+    "Mass": "MA", "Mich": "MI", "Minn": "MN", "Miss": "MS", "Mo": "MO",
+    "Mont": "MT", "Neb": "NE", "Nev": "NV", "Okla": "OK", "Ore": "OR",
+    "Pa": "PA", "Tenn": "TN", "Tex": "TX", "Va": "VA", "Vt": "VT",
+    "Wash": "WA", "Wis": "WI", "Wyo": "WY",
+    "N.H": "NH", "N.J": "NJ", "N.M": "NM", "N.Y": "NY",
+    "N.C": "NC", "N.D": "ND", "R.I": "RI", "S.C": "SC", "S.D": "SD",
+    "W.Va": "WV", "D.C": "DC",
+}
+
+# Build regex that matches any dotted abbreviation (longest first to avoid Pa vs Pa in N.D)
+_DOT_PAT = "(" + "|".join(
+    re.escape(k) for k in sorted(DOTTED_TO_STATE, key=len, reverse=True)
+) + r")\.?"
+
 SKIP_WORDS = {
     "Academic Year", "Hometown", "Last School", "High School", "Full Bio",
     "Expand", "Card View", "List View", "Table View", "Class", "Event",
     "Height", "Weight", "Previous School", "Men's Track", "Women's Track",
     "Track & Field", "Cross Country",
 }
+
+_FULL_STATE_PAT = "(" + "|".join(
+    re.escape(s) for s in sorted(FULL_TO_ABBR.keys(), key=len, reverse=True)
+) + r")"
+
+_YEAR_RE = re.compile(
+    r"^(?:Freshman|Sophomore|Junior|Senior|Graduate\s+Student|Graduate|"
+    r"First\s+Year|Redshirt\s+\w+)\s+", re.I
+)
+
+NON_CITY_STARTS = {
+    "college", "university", "school", "department", "sciences", "science",
+    "arts", "art", "business", "engineering", "program", "studies",
+    "management", "communications", "humanities", "education", "liberal",
+    "applied", "natural", "political", "computer", "information",
+    "environmental", "wharton", "kellogg", "haas", "stern",
+}
+
+
+def _find_ht_in_blob(blob: str):
+    """
+    Extract 'City, ST' from a mixed blob like:
+        'Junior Harvey, Ill. Thornton Township'
+        'Freshman College of Arts & Sciences Atlanta, Ga.'
+        'Redshirt Junior McKinney, Texas Allen HS'
+    Returns a formatted 'City, ST' string or None.
+    """
+    # Strip leading year/class word(s)
+    blob = _YEAR_RE.sub("", blob).strip()
+
+    def try_extract(before_comma: str, state_code: str):
+        words = before_comma.strip().split()
+        for n in [3, 2, 1]:
+            if len(words) < n:
+                continue
+            city_words = words[-n:]
+            if not all(re.match(r"[A-Z]", w) for w in city_words):
+                continue
+            if city_words[0].rstrip(".").lower() in NON_CITY_STARTS:
+                continue
+            city = " ".join(city_words).rstrip(".")
+            r = parse_hometown(f"{city}, {state_code}")
+            if r:
+                return r
+        return None
+
+    # Dotted abbreviation: "Harvey, Ill."
+    for m in re.finditer(r"(.+),\s+" + _DOT_PAT + r"(?:\s|/|$)", blob):
+        state = DOTTED_TO_STATE.get(m.group(2))
+        if state:
+            r = try_extract(m.group(1), state)
+            if r:
+                return r
+
+    # 2-letter postal code: "Walla Walla, WA"
+    for m in re.finditer(r"(.+),\s+([A-Z]{2})(?:\s|/|$)", blob):
+        state = FULL_TO_ABBR.get(m.group(2)) or (m.group(2) if m.group(2) in STATE_ABBR.values() else None)
+        if state:
+            r = try_extract(m.group(1), state)
+            if r:
+                return r
+
+    # Full state name: "McKinney, Texas"
+    for m in re.finditer(r"(.+),\s+" + _FULL_STATE_PAT + r"(?:\s|/|$)", blob, re.I):
+        state = FULL_TO_ABBR.get(m.group(2)) or FULL_TO_ABBR.get(m.group(2).title())
+        if state:
+            r = try_extract(m.group(1), state)
+            if r:
+                return r
+
+    return None
 
 
 def _extract_name_before(lines, i):
@@ -304,23 +397,131 @@ def _extract_name_before(lines, i):
     return None
 
 
-def parse_page(text: str) -> list[dict]:
-    """Extract (name, hometown) pairs from Sidearm roster page text.
-
-    Sidearm puts label and value on separate lines:
-        Connor Ackley
-        Academic Year
-        Hometown          <- label alone
-        Hilliard, Ohio    <- value on NEXT line
-        Last School
+def _parse_tab_table(lines: list[str]) -> list[dict]:
+    """
+    Pattern C: Tab-separated table.
+    Find header row containing 'HOMETOWN' column, then parse data rows.
+    Examples:
+        FULL NAME\tEVENTS\tYEAR\tHOMETOWN\tHIGH SCHOOL
+        Name\tYr\tHt\tEvents\tHometown\tHigh School/Previous School
+        FULL NAME\tEVENTS\tACADEMIC YEAR\tHOMETOWN / HIGH SCHOOL
     """
     results = []
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
     i = 0
     while i < len(lines):
         line = lines[i]
+        if "\t" in line and "hometown" in line.lower():
+            # Found header - find which tab column is HOMETOWN
+            cols = [c.strip().lower() for c in line.split("\t")]
+            ht_col = next(
+                (j for j, c in enumerate(cols)
+                 if "hometown" in c and "school" not in c),
+                None
+            )
+            # Fallback: column that starts with "hometown"
+            if ht_col is None:
+                ht_col = next(
+                    (j for j, c in enumerate(cols) if c.startswith("hometown")),
+                    None
+                )
+            name_col = 0  # name is always first column
+            if ht_col is None:
+                i += 1
+                continue
 
-        # Pattern A: "Hometown" alone on a line, city+state on next line
+            # Parse data rows until we hit a non-tab line or another header
+            i += 1
+            while i < len(lines):
+                row_line = lines[i]
+                if "\t" not in row_line:
+                    break
+                # Skip if this looks like another header
+                if "hometown" in row_line.lower() and "name" in row_line.lower():
+                    break
+                cells = [c.strip() for c in row_line.split("\t")]
+                if len(cells) <= ht_col:
+                    i += 1
+                    continue
+                name = cells[name_col] if len(cells) > name_col else ""
+                raw_ht = cells[ht_col]
+                # Strip "/ High School name" suffix
+                raw_ht = re.split(r'\s*/\s*', raw_ht)[0].strip()
+                # Skip blank, international-looking
+                if not name or not raw_ht or len(name) < 4:
+                    i += 1
+                    continue
+                # Name might be ALL CAPS on some sites - title-case it
+                if name.isupper():
+                    name = name.title()
+                hometown = _find_ht_in_blob(raw_ht)
+                if hometown:
+                    results.append({"name": name, "hometown": hometown})
+                i += 1
+            continue  # don't increment i again
+        i += 1
+    return results
+
+
+def _parse_inline_cards(lines: list[str]) -> list[dict]:
+    """
+    Pattern D: Inline card format.
+    Each athlete card renders as:
+        Name (alone)
+        [blank line stripped out]
+        YearClass [Major] City, State. HighSchool
+        Full Bio
+    We anchor on 'Full Bio' lines and look backwards.
+    """
+    results = []
+    for i, line in enumerate(lines):
+        if line != "Full Bio":
+            continue
+        # Walk back to find the blob (year+city+hs) and the name
+        blob = None
+        name = None
+        for j in range(i - 1, max(i - 6, -1), -1):
+            cand = lines[j]
+            if not blob:
+                # First non-skip line back = blob
+                if cand not in SKIP_WORDS and not re.match(
+                    r'(?:Freshman|Sophomore|Junior|Senior|Graduate|First Year|'
+                    r'Redshirt|Sr\.|Jr\.|So\.|Fr\.|Gr\.)',
+                    cand,
+                ) or re.search(r',', cand):
+                    # Line contains year+city run together
+                    blob = cand
+                    continue
+            else:
+                # blob found — look for name
+                if (re.match(r'[A-Z][a-z]', cand) or cand.isupper()):
+                    words = cand.split()
+                    if (2 <= len(words) <= 5
+                            and not any(s.lower() in cand.lower() for s in SKIP_WORDS)
+                            and not re.search(r'\d{4}|http|\.com|@', cand)):
+                        name = cand.title() if cand.isupper() else cand
+                        break
+        if name and blob:
+            hometown = _find_ht_in_blob(blob)
+            if hometown:
+                results.append({"name": name, "hometown": hometown})
+    return results
+
+
+def parse_page(text: str) -> list[dict]:
+    """
+    Extract (name, hometown) pairs from a Sidearm roster page.
+
+    Handles four rendering patterns found across DI programs:
+      A  Label-value cards:  "Hometown" alone, then "Hilliard, Ohio" on next line
+      B  Inline label:       "Hometown Hilliard, Ohio" on one line
+      C  Tab-separated table: FULL NAME\tEVENTS\tHOMETOWN\t...
+      D  Inline card blob:   "Junior Harvey, Ill. Thornton Township" after name line
+    """
+    results = []
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    # ── Pattern A & B (label-based) ──────────────────────────────────────────
+    for i, line in enumerate(lines):
         if line == "Hometown" and i + 1 < len(lines):
             raw_ht = lines[i + 1].strip()
             if raw_ht not in SKIP_WORDS and len(raw_ht) > 3:
@@ -328,8 +529,6 @@ def parse_page(text: str) -> list[dict]:
                 name = _extract_name_before(lines, i)
                 if name and len(name) >= 4:
                     results.append({"name": name, "hometown": hometown})
-
-        # Pattern B: "Hometown City, State" on one line
         elif line.startswith("Hometown ") and len(line) > 12:
             raw_ht = line[9:].strip()
             hometown = parse_hometown(raw_ht)
@@ -337,8 +536,17 @@ def parse_page(text: str) -> list[dict]:
             if name and len(name) >= 4:
                 results.append({"name": name, "hometown": hometown})
 
-        i += 1
+    # If Patterns A/B found athletes, we're done (avoid double-counting)
+    if results:
+        pass
+    else:
+        # ── Pattern C: tab-separated table ───────────────────────────────────
+        results.extend(_parse_tab_table(lines))
+        # ── Pattern D: inline card blobs ─────────────────────────────────────
+        if not results:
+            results.extend(_parse_inline_cards(lines))
 
+    # Deduplicate by normalized name
     seen, out = set(), []
     for r in results:
         k = normalize(r["name"])
