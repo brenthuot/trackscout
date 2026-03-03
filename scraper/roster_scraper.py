@@ -26,8 +26,8 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-PAGE_DELAY   = 2.5   # seconds between page loads
-SCHOOL_DELAY = 1.0   # extra pause between schools
+PAGE_DELAY   = 1.0   # between page fetches (sleep inside scrape_page adds 3.5s+)
+SCHOOL_DELAY = 0.5   # extra pause between schools
 
 STATE_ABBR = {
     "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA",
@@ -329,21 +329,42 @@ def parse_page(text: str) -> list[dict]:
 
 
 def scrape_page(page, url: str, school: str) -> list[dict]:
+    # Use "load" (not "networkidle") — athletic sites never stop firing ad/analytics
+    # requests so networkidle always times out. "load" fires when DOM + resources are
+    # ready, then we sleep to let JS render the roster cards.
     try:
-        page.goto(url, timeout=35000, wait_until="networkidle")
-        time.sleep(2.0)
+        page.goto(url, timeout=45000, wait_until="load")
     except PlaywrightTimeout:
-        log.warning(f"  Timeout: {url}")
+        log.warning(f"  Timeout on load: {url}")
         return []
     except Exception as e:
         log.error(f"  Error fetching {url}: {e}")
         return []
+
+    # Wait for JS roster rendering
+    time.sleep(3.5)
+
     try:
         text = page.inner_text("body")
     except Exception as e:
         log.error(f"  Body error: {e}")
         return []
+
     athletes = parse_page(text)
+
+    # If nothing found, wait longer and retry once (some pages lazy-load on scroll)
+    if not athletes:
+        log.debug(f"  No athletes on first parse, waiting 4s and retrying…")
+        time.sleep(4.0)
+        try:
+            # Scroll to trigger lazy loading
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(1.5)
+            text = page.inner_text("body")
+            athletes = parse_page(text)
+        except Exception:
+            pass
+
     log.info(f"  {len(athletes)} athletes parsed — {school}")
     return athletes
 
@@ -396,7 +417,7 @@ def run(conf_filter=None, school_filter=None, limit=9999, dry_run=False, overwri
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         ))
         pg = ctx.new_page()
-        pg.set_default_timeout(35000)
+        pg.set_default_timeout(45000)
         last_school = None
 
         for entry in rosters:
