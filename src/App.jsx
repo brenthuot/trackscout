@@ -500,7 +500,8 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
 
   useEffect(() => {
     const load = tj => {
-      fetch("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json").then(r=>r.json()).then(us=>{
+      // counties-10m.json contains both states AND counties (states-10m.json has no counties object)
+      fetch("https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json").then(r=>r.json()).then(us=>{
         setGeo(tj.feature(us,us.objects.states));
         setCounties(tj.feature(us,us.objects.counties));
       });
