@@ -1,0 +1,57 @@
+name: Scrape Roster Hometowns
+
+on:
+  workflow_dispatch:
+    inputs:
+      conf:
+        description: 'Conference to scrape (leave blank for ALL)'
+        required: false
+        default: ''
+      school:
+        description: 'Single school to scrape (leave blank for ALL)'
+        required: false
+        default: ''
+      overwrite:
+        description: 'Overwrite existing hometowns? (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120   # ~170 pages × 4s = ~12 min, but 2h safety margin
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright supabase
+
+      - name: Install Playwright browser
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run roster scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.conf }}" ]; then
+            ARGS="$ARGS --conf '${{ github.event.inputs.conf }}'"
+          fi
+          if [ -n "${{ github.event.inputs.school }}" ]; then
+            ARGS="$ARGS --school '${{ github.event.inputs.school }}'"
+          fi
+          if [ "${{ github.event.inputs.overwrite }}" = "true" ]; then
+            ARGS="$ARGS --all"
+          fi
+          eval python scraper/roster_scraper.py $ARGS
