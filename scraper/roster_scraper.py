@@ -291,34 +291,54 @@ SKIP_WORDS = {
 }
 
 
+def _extract_name_before(lines, i):
+    for j in range(i - 1, max(i - 15, -1), -1):
+        cand = lines[j]
+        if cand.startswith("### "):
+            cand = cand[4:]
+        if (re.match(r'[A-Z][a-z]', cand)
+                and 2 <= len(cand.split()) <= 5
+                and not any(s.lower() in cand.lower() for s in SKIP_WORDS)
+                and not re.search(r'\d{4}|http|\.com|@', cand)):
+            return cand.strip()
+    return None
+
+
 def parse_page(text: str) -> list[dict]:
-    """Extract (name, hometown) pairs from rendered Sidearm roster page text."""
+    """Extract (name, hometown) pairs from Sidearm roster page text.
+
+    Sidearm puts label and value on separate lines:
+        Connor Ackley
+        Academic Year
+        Hometown          <- label alone
+        Hilliard, Ohio    <- value on NEXT line
+        Last School
+    """
     results = []
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     i = 0
     while i < len(lines):
         line = lines[i]
-        # Sidearm renders: "Hometown City, State" on its own line
-        if line.startswith("Hometown ") and len(line) > 12:
+
+        # Pattern A: "Hometown" alone on a line, city+state on next line
+        if line == "Hometown" and i + 1 < len(lines):
+            raw_ht = lines[i + 1].strip()
+            if raw_ht not in SKIP_WORDS and len(raw_ht) > 3:
+                hometown = parse_hometown(raw_ht)
+                name = _extract_name_before(lines, i)
+                if name and len(name) >= 4:
+                    results.append({"name": name, "hometown": hometown})
+
+        # Pattern B: "Hometown City, State" on one line
+        elif line.startswith("Hometown ") and len(line) > 12:
             raw_ht = line[9:].strip()
             hometown = parse_hometown(raw_ht)
-            # Scan backwards for name within 12 lines
-            name = None
-            for j in range(i - 1, max(i - 12, -1), -1):
-                cand = lines[j]
-                if cand.startswith("### "):
-                    cand = cand[4:]
-                # Name: 2-5 words, starts with capital, no digits or URLs
-                if (re.match(r'[A-Z][a-z]', cand)
-                        and 2 <= len(cand.split()) <= 5
-                        and not any(s.lower() in cand.lower() for s in SKIP_WORDS)
-                        and not re.search(r'\d{4}|http|\.com|@', cand)):
-                    name = cand.strip()
-                    break
+            name = _extract_name_before(lines, i)
             if name and len(name) >= 4:
                 results.append({"name": name, "hometown": hometown})
+
         i += 1
-    # Deduplicate
+
     seen, out = set(), []
     for r in results:
         k = normalize(r["name"])
