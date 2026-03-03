@@ -355,6 +355,9 @@ def _find_ht_in_blob(blob: str):
             if city_words[0].rstrip(".").lower() in NON_CITY_STARTS:
                 continue
             city = " ".join(city_words).rstrip(".")
+            # Reject merged event+city strings like "SprintsSan"
+            if re.search(r'[a-z][A-Z]', city) and not re.match(r'^(Mc|Mac|O\'|St\.|Ft\.|Mt\.)', city):
+                continue
             r = parse_hometown(f"{city}, {state_code}")
             if r:
                 return r
@@ -543,11 +546,20 @@ def parse_page(text: str) -> list[dict]:
     if results:
         pass
     else:
-        # ── Pattern C: tab-separated table ───────────────────────────────────
+        # ── Pattern C: tab-separated table (horizontal header) ──────────────
         results.extend(_parse_tab_table(lines))
-        # ── Pattern D: inline card blobs ─────────────────────────────────────
+        # ── Pattern C2: tab table with vertical header (Oregon) ──────────────
+        if not results:
+            results.extend(_parse_vertical_header_table(lines))
+        # ── Pattern D: inline card blobs (Full Bio anchor) ────────────────────
         if not results:
             results.extend(_parse_inline_cards(lines))
+        # ── Pattern E: Auburn-style card (city on standalone line, no label) ──
+        if not results:
+            results.extend(_parse_auburn_cards(lines))
+        # ── Pattern F: SDSU-style merged (EventCity,State.HS no spaces) ───────
+        if not results:
+            results.extend(_parse_merged_cards(lines))
 
     # Deduplicate by normalized name
     seen, out = set(), []
@@ -557,6 +569,243 @@ def parse_page(text: str) -> list[dict]:
             seen.add(k)
             out.append(r)
     return out
+
+
+def _parse_auburn_cards(lines: list[str]) -> list[dict]:
+    """
+    Pattern E: Auburn/Colorado State style — name repeated, city on standalone
+    line after event category, no 'Hometown' label, no 'Full Bio' anchor.
+
+        Shelby Balding
+        Shelby Balding          <- name repeated
+        Instagram
+        SENIOR
+        DISTANCE/XC             <- event (all-caps)
+        Centennial, Colorado    <- city standalone (full state name)
+        Cherry Creek High School
+    """
+    results = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Detect repeated name: two consecutive lines that are the same
+        # and look like a proper name (2+ words, title-case)
+        if (i + 1 < len(lines)
+                and line == lines[i + 1]
+                and re.match(r'[A-Z][a-z]', line)
+                and 2 <= len(line.split()) <= 5
+                and not re.search(r'\d|http|\.com', line)):
+            name = line.strip()
+            # Look ahead up to 8 lines for a standalone city
+            for j in range(i + 2, min(i + 9, len(lines))):
+                cand = lines[j]
+                # Skip social/meta lines
+                if cand.lower() in {"instagram", "twitter", "facebook", "youtube",
+                                     "tiktok", "opens in a new window", "full bio",
+                                     "hide/show additional information"}:
+                    continue
+                if re.match(r'INFLCR|instagram|twitter', cand, re.I):
+                    continue
+                # Try to parse as a standalone city
+                ht = _find_ht_in_blob(cand)
+                if ht:
+                    results.append({"name": name, "hometown": ht})
+                    break
+                # Stop if we hit another name (next athlete)
+                if (re.match(r'[A-Z][a-z]', cand)
+                        and 2 <= len(cand.split()) <= 5
+                        and j + 1 < len(lines) and lines[j + 1] == cand):
+                    break
+        i += 1
+    return results
+
+
+def _parse_merged_cards(lines: list[str]) -> list[dict]:
+    """
+    Pattern F: San Diego State / USC style — event and city are merged without
+    a space or separator, anchored by 'Full Bio' lines.
+
+        Laraigh Allen
+        Laraigh Allen
+        Instagram
+        Sophomore
+        SprintsSan Diego, Calif.Helix HS    <- event+city+hs merged
+        Full Bio
+
+    Also handles 2-letter event prefixes like Distance/XCPortland, OR.
+    """
+    results = []
+    for i, line in enumerate(lines):
+        if line != "Full Bio":
+            continue
+        for j in range(i - 1, max(i - 6, -1), -1):
+            cand = lines[j]
+            ht = _extract_from_merged(cand)
+            if ht:
+                name = _extract_name_before(lines, j)
+                if not name:
+                    # Try repeated-name pattern
+                    for k in range(j - 1, max(j - 5, -1), -1):
+                        nc = lines[k]
+                        if (re.match(r'[A-Z][a-z]', nc) and 2 <= len(nc.split()) <= 5
+                                and k + 1 < len(lines)):
+                            name = nc
+                            break
+                if name and len(name) >= 4:
+                    results.append({"name": name, "hometown": ht})
+                break
+    return results
+
+
+def _is_clean_city(s: str) -> bool:
+    """Return True if s looks like a clean city name with no merged event prefix."""
+    # Reject if starts with 2+ uppercase letters (event abbrev: XC, CC, HJ, PV...)
+    if re.match(r'^[A-Z]{2}', s):
+        return False
+    # Strip legitimate name prefixes and check no remaining camelCase
+    normalized = re.sub(r'\b(Mc|Mac|O\'|De|Le|La|El|Los|Las|San|St\.|Ft\.|Mt\.)\s*', '', s)
+    return not re.search(r'[a-z][A-Z]', normalized)
+
+
+def _extract_from_merged(blob: str):
+    """
+    Extract City, ST from a string where event name is merged with city (no space).
+    Examples:
+        SprintsSan Diego, Calif.Helix HS  ->  San Diego, CA
+        Pole VaultIssaquah, Wash.         ->  Issaquah, WA
+        Distance/XCCentennial, Colorado   ->  Centennial, CO
+
+    Strategy: find the state suffix, then scan left-to-right for the first
+    uppercase start that produces a clean (non-camelCase) city string.
+    """
+    # Find comma+state suffix and get state code
+    state = None
+    comma_pos = -1
+    for pat, lookup in [
+        (r',\s+' + _DOT_PAT,
+         lambda m: DOTTED_TO_STATE.get(m.group(1))),
+        (r',\s+([A-Z]{2})(?:\s|[A-Z]|$)',
+         lambda m: STATE_ABBR.get(m.group(1))),
+        (r',\s+' + _FULL_STATE_PAT,
+         lambda m: FULL_TO_ABBR.get(m.group(1)) or FULL_TO_ABBR.get(m.group(1).title())),
+    ]:
+        m = re.search(pat, blob, re.I if 'FULL' in pat else 0)
+        if m:
+            state = lookup(m)
+            comma_pos = m.start()
+            if state:
+                break
+
+    if not state or comma_pos < 0:
+        return None
+
+    before = blob[:comma_pos]
+
+    # Scan left-to-right: first uppercase position that yields a clean city
+    for i, ch in enumerate(before):
+        if not ch.isupper():
+            continue
+        city_raw = before[i:].strip()
+        if not re.match(r'[A-Z][a-zA-Z\.\s]{1,30}$', city_raw):
+            continue
+        if not _is_clean_city(city_raw):
+            continue
+        result = parse_hometown(f"{city_raw}, {state}")
+        if result:
+            return result
+
+    return None
+
+
+def _looks_like_schedule(text: str) -> bool:
+    """Return True if the page text looks like schedule/nav content, not a roster."""
+    sched = (
+        text.count("FINAL")
+        + text.count("Final")
+        + text.count("Completed")           # Virginia, Penn State style
+        + text.count("Toggle Media Overlay") # Ole Miss
+        + text.count("Track & Field\nLinks") # standard Sidearm schedule rows
+        + text.count("Track and Field\nLinks")
+        + text.count("Track & Field\nAWAY")
+        + text.count("Track & Field\nHOME")
+        + text.count("TRACK\n")             # Wake Forest
+        + text.count("All Day\n")           # Clemson / Big 12 schedule
+        + text.count("ALL DAY")             # Clemson uppercase variant
+        + text.count("TBA\n")               # LSU / SEC schedule
+        + (10 if text.count("Schedule\nRoster\nNews\n") >= 3 else 0)  # pure nav
+    )
+    roster = (
+        text.count("Hometown") + text.count("HOMETOWN")
+        + text.count("Full Bio") + text.count("FULL BIO")
+        + text.count("Full Bio\n")
+    )
+    return sched >= 3 and roster == 0
+
+
+
+def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
+    """
+    Pattern C2: Oregon-style table where header columns are each on their own
+    line (no tabs in header) but data rows ARE tab-separated.
+
+    Raw text example:
+        FULL NAME            <- standalone
+        POS.                 <- standalone
+        HOMETOWN             <- standalone (this triggers us)
+        HIGH SCHOOL/...      <- standalone
+                             <- blank
+        Cassandra Atkins\tJumps\tDes Moines, Wash.\tFederal Way HS
+    """
+    HEADER_WORDS = {
+        "full name", "name", "pos.", "pos", "position", "events", "event",
+        "year", "class", "yr", "yr.", "ht", "ht.", "height",
+        "high school/previous school", "high school", "previous school",
+        "last school", "hometown / previous school", "hometown / high school",
+    }
+    results = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Trigger: standalone "HOMETOWN" line (no tabs)
+        if re.match(r"^HOMETOWN", line, re.I) and "\t" not in line:
+            # Walk back to find the start of the vertical header block
+            header_cols = []
+            j = i - 1
+            while j >= 0:
+                cand = lines[j].strip()
+                if cand.lower() in HEADER_WORDS or cand == "":
+                    if cand:
+                        header_cols.insert(0, cand.lower())
+                    j -= 1
+                else:
+                    break
+            header_cols.append("hometown")  # this line
+            ht_col = len(header_cols) - 1
+
+            # Skip remaining header-like lines below HOMETOWN
+            i += 1
+            while i < len(lines) and "\t" not in lines[i]:
+                i += 1
+
+            # Parse tab-separated data rows
+            while i < len(lines):
+                row = lines[i]
+                if "\t" not in row:
+                    break
+                cells = [c.strip() for c in row.split("\t")]
+                if len(cells) > ht_col:
+                    name = cells[0] if cells[0] else (cells[1] if len(cells) > 1 else "")
+                    raw_ht = re.split(r"\s*/\s*", cells[ht_col])[0].strip()
+                    if name and raw_ht and len(name) >= 4:
+                        if name.isupper():
+                            name = name.title()
+                        ht = _find_ht_in_blob(raw_ht)
+                        if ht:
+                            results.append({"name": name, "hometown": ht})
+                i += 1
+            continue
+        i += 1
+    return results
 
 
 def scrape_page(page, url: str, school: str) -> list[dict]:
@@ -569,7 +818,14 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
         log.error(f"  Error fetching {url}: {e}")
         return []
 
+    # Wait for roster content to render (Sidearm SPAs can be slow)
     time.sleep(3.5)
+    for _roster_signal in ['text="Hometown"', 'text="HOMETOWN"', '.sidearm-roster-player']:
+        try:
+            page.wait_for_selector(_roster_signal, timeout=4000)
+            break
+        except Exception:
+            continue
 
     try:
         text = page.inner_text("body")
@@ -579,12 +835,57 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
 
     athletes = parse_page(text)
 
-    # Retry with scroll if nothing found
+    # Retry 1: scroll to trigger lazy-loading, then re-check
     if not athletes:
-        time.sleep(4.0)
         try:
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(1.5)
+            time.sleep(3.0)
+            text = page.inner_text("body")
+            athletes = parse_page(text)
+        except Exception:
+            pass
+
+    # Retry 2: page shows schedule/nav instead of roster content
+    # Covers: schedule tab active by default, nav-only render, slow SPA hydration
+    if not athletes and _looks_like_schedule(text):
+        log.info(f"  Schedule content detected — trying roster tab click")
+        clicked = False
+        for selector in [
+            'li:has-text("Roster") > a',
+            '.sidearm-navigation-sub-links a:has-text("Roster")',
+            'nav a[href*="/roster"]',
+            'a[href*="/roster"]:not([href*="schedule"]):not([href*="news"])',
+            'a:has-text("Roster")',
+        ]:
+            try:
+                el = page.locator(selector).first
+                if el.is_visible(timeout=2000):
+                    el.click()
+                    clicked = True
+                    break
+            except Exception:
+                continue
+        if clicked:
+            time.sleep(5.0)
+            try:
+                text = page.inner_text("body")
+                athletes = parse_page(text)
+            except Exception:
+                pass
+
+    # Retry 3: if still empty and we didn't get roster, reload with longer wait
+    if not athletes and _looks_like_schedule(text):
+        log.info(f"  Click didn't help — reloading with extended wait")
+        try:
+            page.reload(timeout=45000, wait_until="load")
+            time.sleep(7.0)
+            # Try waiting for any roster signal
+            for _sig in ['text="Hometown"', 'text="HOMETOWN"', 'text="Full Bio"']:
+                try:
+                    page.wait_for_selector(_sig, timeout=5000)
+                    break
+                except Exception:
+                    continue
             text = page.inner_text("body")
             athletes = parse_page(text)
         except Exception:
