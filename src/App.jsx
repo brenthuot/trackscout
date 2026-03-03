@@ -378,15 +378,14 @@ function drawHeatmap(canvas, athletes, projection) {
       .filter(p => p && isFinite(p[0]) && isFinite(p[1]) && p[0] > -50 && p[1] > -50 && p[0] < W+50 && p[1] < H+50);
     if (!pts.length) return;
 
-    // Half resolution
     const S = 0.5;
     const sw = Math.ceil(W * S), sh = Math.ceil(H * S);
     const N = sw * sh;
-    const density = new Float32Array(N);
 
-    // Tight dot accumulation — small initial footprint per athlete
+    // Accumulate density
+    const raw = new Float32Array(N);
     const dotR = Math.max(2, Math.round(sw * 0.012));
-    const bw = dotR * 1.1;
+    const bw = dotR;
     pts.forEach(([px, py]) => {
       const sx = px * S, sy = py * S;
       const x0 = Math.max(0, Math.floor(sx - dotR * 3));
@@ -396,70 +395,81 @@ function drawHeatmap(canvas, athletes, projection) {
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
           const d2 = (x - sx) * (x - sx) + (y - sy) * (y - sy);
-          density[y * sw + x] += Math.exp(-d2 / (2 * bw * bw));
+          raw[y * sw + x] += Math.exp(-d2 / (2 * bw * bw));
         }
       }
     });
 
-    // Large blur radius — fills gaps between cities into a continuous field
-    // sw * 0.07 = ~34px at half-res; 3 box-blur passes ≈ gaussian sigma ~59px
-    // This blends the dense east-coast corridor into one smooth gradient
-    const radius = Math.max(8, Math.round(sw * 0.07));
-    const tmp = new Float32Array(N);
-    for (let pass = 0; pass < 3; pass++) {
-      // Horizontal
-      for (let y = 0; y < sh; y++) {
-        let sum = 0, cnt = 0;
-        for (let x = 0; x < Math.min(radius + 1, sw); x++) { sum += density[y * sw + x]; cnt++; }
-        for (let x = 0; x < sw; x++) {
-          if (x + radius < sw) { sum += density[y * sw + x + radius]; cnt++; }
-          if (x - radius - 1 >= 0) { sum -= density[y * sw + x - radius - 1]; cnt--; }
-          tmp[y * sw + x] = sum / cnt;
-        }
-      }
-      // Vertical
-      for (let x = 0; x < sw; x++) {
-        let sum = 0, cnt = 0;
-        for (let y = 0; y < Math.min(radius + 1, sh); y++) { sum += tmp[y * sw + x]; cnt++; }
+    // Box blur helper
+    function boxBlur(src, r, passes) {
+      const out = new Float32Array(src);
+      const tmp = new Float32Array(N);
+      for (let p = 0; p < passes; p++) {
         for (let y = 0; y < sh; y++) {
-          if (y + radius < sh) { sum += tmp[(y + radius) * sw + x]; cnt++; }
-          if (y - radius - 1 >= 0) { sum -= tmp[(y - radius - 1) * sw + x]; cnt--; }
-          density[y * sw + x] = sum / cnt;
+          let sum = 0, cnt = 0;
+          for (let x = 0; x < Math.min(r+1, sw); x++) { sum += out[y*sw+x]; cnt++; }
+          for (let x = 0; x < sw; x++) {
+            if (x+r < sw)     { sum += out[y*sw+x+r]; cnt++; }
+            if (x-r-1 >= 0)   { sum -= out[y*sw+x-r-1]; cnt--; }
+            tmp[y*sw+x] = sum / cnt;
+          }
+        }
+        for (let x = 0; x < sw; x++) {
+          let sum = 0, cnt = 0;
+          for (let y = 0; y < Math.min(r+1, sh); y++) { sum += tmp[y*sw+x]; cnt++; }
+          for (let y = 0; y < sh; y++) {
+            if (y+r < sh)     { sum += tmp[(y+r)*sw+x]; cnt++; }
+            if (y-r-1 >= 0)   { sum -= tmp[(y-r-1)*sw+x]; cnt--; }
+            out[y*sw+x] = sum / cnt;
+          }
         }
       }
+      return out;
     }
 
-    // 99th percentile normalization
-    const nonzero = Array.from(density).filter(v => v > 0);
-    if (!nonzero.length) return;
-    nonzero.sort((a, b) => a - b);
-    const mx = nonzero[Math.floor(nonzero.length * 0.99)] || nonzero[nonzero.length - 1];
-    // Min threshold = 2% of max — so sparse areas still show faint color (NOAA-style)
-    const mn = mx * 0.02;
+    // Two blur scales blended together
+    const tight  = boxBlur(raw, Math.max(2, Math.round(sw * 0.02)), 3);  // city structure
+    const wide   = boxBlur(raw, Math.max(8, Math.round(sw * 0.10)), 3);  // regional fill
 
-    // NOAA palette: fully transparent below threshold, then cream→orange→deep red
+    const density = new Float32Array(N);
+    for (let i = 0; i < N; i++) density[i] = tight[i] * 0.5 + wide[i] * 0.5;
+
+    // Find max (99th percentile)
+    const vals = Array.from(density).filter(v => v > 0).sort((a,b) => a-b);
+    if (!vals.length) return;
+    const mx = vals[Math.floor(vals.length * 0.99)] || vals[vals.length-1];
+
+    // POWER normalization: t = (v/mx)^0.35
+    // This is the key — power < 1 compresses the high end and lifts the low end.
+    // Like NOAA: sparse Montana still shows distinct warm color, not transparent.
+    // Linear would make the west invisible next to the dense east.
+    const GAMMA = 0.35;
+
+    // Palette: white/cream → light orange → orange → red → deep crimson
+    // Low alpha at bottom so gray map shows through slightly in truly empty areas
     const STOPS = [
-      { t: 0.00, r: 255, g: 245, b: 225, a:   0 },
-      { t: 0.04, r: 255, g: 240, b: 210, a:  40 },
-      { t: 0.12, r: 255, g: 215, b: 155, a:  95 },
-      { t: 0.25, r: 250, g: 170, b:  85, a: 148 },
-      { t: 0.42, r: 238, g: 100, b:  25, a: 190 },
-      { t: 0.60, r: 215, g:  45, b:   6, a: 215 },
-      { t: 0.78, r: 172, g:  12, b:   2, a: 232 },
-      { t: 1.00, r: 110, g:   0, b:   0, a: 248 },
+      { t: 0.00, r: 255, g: 248, b: 235, a:   0 },
+      { t: 0.08, r: 255, g: 235, b: 195, a:  55 },
+      { t: 0.18, r: 255, g: 210, b: 148, a: 100 },
+      { t: 0.30, r: 252, g: 172, b:  82, a: 148 },
+      { t: 0.44, r: 242, g: 110, b:  24, a: 188 },
+      { t: 0.60, r: 218, g:  50, b:   5, a: 215 },
+      { t: 0.76, r: 174, g:  14, b:   2, a: 232 },
+      { t: 1.00, r: 112, g:   0, b:   0, a: 245 },
     ];
     const lerp = (a, b, t) => Math.round(a + (b - a) * t);
     const img = new Uint8ClampedArray(N * 4);
+
     for (let i = 0; i < N; i++) {
       const v = density[i];
-      if (v < mn) continue;
-      // Remap v from [mn..mx] → [0..1] so even sparse areas map to visible colors
-      const t = Math.min(1, (v - mn) / (mx - mn));
+      if (v <= 0) continue;
+      // Power-scale normalization: spreads color across the full range
+      const t = Math.min(1, Math.pow(v / mx, GAMMA));
       let s0 = STOPS[0], s1 = STOPS[1];
       for (let k = 0; k < STOPS.length - 1; k++) {
-        if (t >= STOPS[k].t && t <= STOPS[k + 1].t) { s0 = STOPS[k]; s1 = STOPS[k + 1]; break; }
+        if (t >= STOPS[k].t && t <= STOPS[k+1].t) { s0 = STOPS[k]; s1 = STOPS[k+1]; break; }
       }
-      if (t >= STOPS[STOPS.length - 1].t) { s0 = STOPS[STOPS.length - 2]; s1 = STOPS[STOPS.length - 1]; }
+      if (t >= STOPS[STOPS.length-1].t) { s0 = STOPS[STOPS.length-2]; s1 = STOPS[STOPS.length-1]; }
       const f = s1.t === s0.t ? 1 : (t - s0.t) / (s1.t - s0.t);
       const ii = i * 4;
       img[ii]   = lerp(s0.r, s1.r, f);
