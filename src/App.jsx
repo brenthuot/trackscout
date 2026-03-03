@@ -378,22 +378,21 @@ function drawHeatmap(canvas, athletes, projection) {
       .filter(p => p && isFinite(p[0]) && isFinite(p[1]) && p[0] > -50 && p[1] > -50 && p[0] < W+50 && p[1] < H+50);
     if (!pts.length) return;
 
-    // Half resolution: ~480x280 — enough detail, fast enough
+    // Half resolution
     const S = 0.5;
     const sw = Math.ceil(W * S), sh = Math.ceil(H * S);
     const N = sw * sh;
     const density = new Float32Array(N);
 
-    // Dot accumulation: tight gaussian per point
-    // dotR ~8px at half-res = ~16px on screen — city-level precision
-    const dotR = Math.max(3, Math.round(sw * 0.017));
+    // Tight dot accumulation — small initial footprint per athlete
+    const dotR = Math.max(2, Math.round(sw * 0.012));
     const bw = dotR * 1.1;
     pts.forEach(([px, py]) => {
       const sx = px * S, sy = py * S;
-      const x0 = Math.max(0, Math.floor(sx - dotR * 2.5));
-      const x1 = Math.min(sw - 1, Math.ceil(sx + dotR * 2.5));
-      const y0 = Math.max(0, Math.floor(sy - dotR * 2.5));
-      const y1 = Math.min(sh - 1, Math.ceil(sy + dotR * 2.5));
+      const x0 = Math.max(0, Math.floor(sx - dotR * 3));
+      const x1 = Math.min(sw - 1, Math.ceil(sx + dotR * 3));
+      const y0 = Math.max(0, Math.floor(sy - dotR * 3));
+      const y1 = Math.min(sh - 1, Math.ceil(sy + dotR * 3));
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
           const d2 = (x - sx) * (x - sx) + (y - sy) * (y - sy);
@@ -402,12 +401,11 @@ function drawHeatmap(canvas, athletes, projection) {
       }
     });
 
-    // Separable box blur — 3 passes ≈ gaussian
-    // radius = 3% of half-width ≈ 14px at half-res = 28px on screen
-    // This blends neighboring cities but keeps distant regions distinct
-    const radius = Math.max(1, Math.round(sw * 0.002));
+    // Large blur radius — fills gaps between cities into a continuous field
+    // sw * 0.07 = ~34px at half-res; 3 box-blur passes ≈ gaussian sigma ~59px
+    // This blends the dense east-coast corridor into one smooth gradient
+    const radius = Math.max(8, Math.round(sw * 0.07));
     const tmp = new Float32Array(N);
-
     for (let pass = 0; pass < 3; pass++) {
       // Horizontal
       for (let y = 0; y < sh; y++) {
@@ -432,29 +430,31 @@ function drawHeatmap(canvas, athletes, projection) {
     }
 
     // 99th percentile normalization
-    const nonzero = Array.from(density).filter(v => v > 0.0001);
+    const nonzero = Array.from(density).filter(v => v > 0);
     if (!nonzero.length) return;
     nonzero.sort((a, b) => a - b);
     const mx = nonzero[Math.floor(nonzero.length * 0.99)] || nonzero[nonzero.length - 1];
+    // Min threshold = 2% of max — so sparse areas still show faint color (NOAA-style)
+    const mn = mx * 0.02;
 
-    // NOAA-style palette: transparent → pale cream → light orange → deep orange → dark red
-    // Matches reference: sparse areas white/transparent, dense areas deep crimson
+    // NOAA palette: fully transparent below threshold, then cream→orange→deep red
     const STOPS = [
-      { t: 0.00, r: 255, g: 255, b: 255, a:   0 },
-      { t: 0.05, r: 255, g: 245, b: 220, a:  35 },
-      { t: 0.12, r: 255, g: 218, b: 168, a:  90 },
-      { t: 0.22, r: 252, g: 178, b: 100, a: 145 },
-      { t: 0.36, r: 240, g: 110, b:  32, a: 188 },
-      { t: 0.54, r: 218, g:  50, b:   8, a: 215 },
-      { t: 0.74, r: 175, g:  15, b:   3, a: 232 },
-      { t: 1.00, r: 112, g:   0, b:   0, a: 248 },
+      { t: 0.00, r: 255, g: 245, b: 225, a:   0 },
+      { t: 0.04, r: 255, g: 240, b: 210, a:  40 },
+      { t: 0.12, r: 255, g: 215, b: 155, a:  95 },
+      { t: 0.25, r: 250, g: 170, b:  85, a: 148 },
+      { t: 0.42, r: 238, g: 100, b:  25, a: 190 },
+      { t: 0.60, r: 215, g:  45, b:   6, a: 215 },
+      { t: 0.78, r: 172, g:  12, b:   2, a: 232 },
+      { t: 1.00, r: 110, g:   0, b:   0, a: 248 },
     ];
     const lerp = (a, b, t) => Math.round(a + (b - a) * t);
     const img = new Uint8ClampedArray(N * 4);
     for (let i = 0; i < N; i++) {
       const v = density[i];
-      if (v < 0.0005) continue;
-      const t = Math.min(1, v / mx);
+      if (v < mn) continue;
+      // Remap v from [mn..mx] → [0..1] so even sparse areas map to visible colors
+      const t = Math.min(1, (v - mn) / (mx - mn));
       let s0 = STOPS[0], s1 = STOPS[1];
       for (let k = 0; k < STOPS.length - 1; k++) {
         if (t >= STOPS[k].t && t <= STOPS[k + 1].t) { s0 = STOPS[k]; s1 = STOPS[k + 1]; break; }
@@ -468,7 +468,6 @@ function drawHeatmap(canvas, athletes, projection) {
       img[ii+3] = lerp(s0.a, s1.a, f);
     }
 
-    // Write small canvas, scale up to full resolution
     const small = document.createElement('canvas');
     small.width = sw; small.height = sh;
     small.getContext('2d').putImageData(new ImageData(img, sw, sh), 0, 0);
