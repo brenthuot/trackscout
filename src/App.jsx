@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+\import { useState, useEffect, useRef, useMemo } from "react";
 import * as d3 from "d3";
 
 // ── THEME ─────────────────────────────────────────────────────────────────────
@@ -378,21 +378,22 @@ function drawHeatmap(canvas, athletes, projection) {
       .filter(p => p && isFinite(p[0]) && isFinite(p[1]) && p[0] > -50 && p[1] > -50 && p[0] < W+50 && p[1] < H+50);
     if (!pts.length) return;
 
-    // Work at quarter resolution: ~240x140 for 960x560 → very fast
-    const S = 0.25;
+    // Half resolution: ~480x280 — enough detail, fast enough
+    const S = 0.5;
     const sw = Math.ceil(W * S), sh = Math.ceil(H * S);
     const N = sw * sh;
-
-    // Step 1: accumulate density as float array
     const density = new Float32Array(N);
-    const dotR = Math.max(1.5, sw * 0.016); // ~4px at quarter res
-    const bw = dotR * 1.2;
+
+    // Dot accumulation: tight gaussian per point
+    // dotR ~8px at half-res = ~16px on screen — city-level precision
+    const dotR = Math.max(3, Math.round(sw * 0.017));
+    const bw = dotR * 1.1;
     pts.forEach(([px, py]) => {
       const sx = px * S, sy = py * S;
-      const x0 = Math.max(0, Math.floor(sx - dotR * 2));
-      const x1 = Math.min(sw - 1, Math.ceil(sx + dotR * 2));
-      const y0 = Math.max(0, Math.floor(sy - dotR * 2));
-      const y1 = Math.min(sh - 1, Math.ceil(sy + dotR * 2));
+      const x0 = Math.max(0, Math.floor(sx - dotR * 2.5));
+      const x1 = Math.min(sw - 1, Math.ceil(sx + dotR * 2.5));
+      const y0 = Math.max(0, Math.floor(sy - dotR * 2.5));
+      const y1 = Math.min(sh - 1, Math.ceil(sy + dotR * 2.5));
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
           const d2 = (x - sx) * (x - sx) + (y - sy) * (y - sy);
@@ -401,62 +402,64 @@ function drawHeatmap(canvas, athletes, projection) {
       }
     });
 
-    // Step 2: separable box blur — 3 passes makes it approximate gaussian
-    // O(sw * sh * radius) not O(sw * sh * radius^2)
-    const radius = Math.max(4, Math.round(sw * 0.10)); // ~24px at quarter res
+    // Separable box blur — 3 passes ≈ gaussian
+    // radius = 3% of half-width ≈ 14px at half-res = 28px on screen
+    // This blends neighboring cities but keeps distant regions distinct
+    const radius = Math.max(3, Math.round(sw * 0.03));
     const tmp = new Float32Array(N);
 
     for (let pass = 0; pass < 3; pass++) {
-      // Horizontal pass
+      // Horizontal
       for (let y = 0; y < sh; y++) {
-        let sum = 0, count = 0;
-        for (let x = 0; x < Math.min(radius, sw); x++) { sum += density[y * sw + x]; count++; }
+        let sum = 0, cnt = 0;
+        for (let x = 0; x < Math.min(radius + 1, sw); x++) { sum += density[y * sw + x]; cnt++; }
         for (let x = 0; x < sw; x++) {
-          if (x + radius < sw) { sum += density[y * sw + x + radius]; count++; }
-          if (x - radius - 1 >= 0) { sum -= density[y * sw + x - radius - 1]; count--; }
-          tmp[y * sw + x] = sum / count;
+          if (x + radius < sw) { sum += density[y * sw + x + radius]; cnt++; }
+          if (x - radius - 1 >= 0) { sum -= density[y * sw + x - radius - 1]; cnt--; }
+          tmp[y * sw + x] = sum / cnt;
         }
       }
-      // Vertical pass
+      // Vertical
       for (let x = 0; x < sw; x++) {
-        let sum = 0, count = 0;
-        for (let y = 0; y < Math.min(radius, sh); y++) { sum += tmp[y * sw + x]; count++; }
+        let sum = 0, cnt = 0;
+        for (let y = 0; y < Math.min(radius + 1, sh); y++) { sum += tmp[y * sw + x]; cnt++; }
         for (let y = 0; y < sh; y++) {
-          if (y + radius < sh) { sum += tmp[(y + radius) * sw + x]; count++; }
-          if (y - radius - 1 >= 0) { sum -= tmp[(y - radius - 1) * sw + x]; count--; }
-          density[y * sw + x] = sum / count;
+          if (y + radius < sh) { sum += tmp[(y + radius) * sw + x]; cnt++; }
+          if (y - radius - 1 >= 0) { sum -= tmp[(y - radius - 1) * sw + x]; cnt--; }
+          density[y * sw + x] = sum / cnt;
         }
       }
     }
 
-    // Step 3: 99th percentile normalization
-    const nonzero = Array.from(density).filter(v => v > 0);
+    // 99th percentile normalization
+    const nonzero = Array.from(density).filter(v => v > 0.0001);
     if (!nonzero.length) return;
     nonzero.sort((a, b) => a - b);
     const mx = nonzero[Math.floor(nonzero.length * 0.99)] || nonzero[nonzero.length - 1];
 
-    // Step 4: colorize — NOAA-style continuous palette
+    // NOAA-style palette: transparent → pale cream → light orange → deep orange → dark red
+    // Matches reference: sparse areas white/transparent, dense areas deep crimson
     const STOPS = [
       { t: 0.00, r: 255, g: 255, b: 255, a:   0 },
-      { t: 0.03, r: 255, g: 245, b: 225, a:  25 },
-      { t: 0.08, r: 255, g: 215, b: 165, a:  85 },
-      { t: 0.18, r: 252, g: 170, b:  95, a: 145 },
-      { t: 0.32, r: 238, g: 105, b:  30, a: 190 },
-      { t: 0.50, r: 215, g:  48, b:   8, a: 215 },
-      { t: 0.70, r: 172, g:  14, b:   3, a: 232 },
-      { t: 1.00, r: 110, g:   0, b:   0, a: 248 },
+      { t: 0.05, r: 255, g: 245, b: 220, a:  35 },
+      { t: 0.12, r: 255, g: 218, b: 168, a:  90 },
+      { t: 0.22, r: 252, g: 178, b: 100, a: 145 },
+      { t: 0.36, r: 240, g: 110, b:  32, a: 188 },
+      { t: 0.54, r: 218, g:  50, b:   8, a: 215 },
+      { t: 0.74, r: 175, g:  15, b:   3, a: 232 },
+      { t: 1.00, r: 112, g:   0, b:   0, a: 248 },
     ];
     const lerp = (a, b, t) => Math.round(a + (b - a) * t);
     const img = new Uint8ClampedArray(N * 4);
     for (let i = 0; i < N; i++) {
       const v = density[i];
-      if (v < 0.001) continue;
+      if (v < 0.0005) continue;
       const t = Math.min(1, v / mx);
       let s0 = STOPS[0], s1 = STOPS[1];
       for (let k = 0; k < STOPS.length - 1; k++) {
-        if (t >= STOPS[k].t && t <= STOPS[k+1].t) { s0 = STOPS[k]; s1 = STOPS[k+1]; break; }
+        if (t >= STOPS[k].t && t <= STOPS[k + 1].t) { s0 = STOPS[k]; s1 = STOPS[k + 1]; break; }
       }
-      if (t > STOPS[STOPS.length-1].t) { s0 = STOPS[STOPS.length-2]; s1 = STOPS[STOPS.length-1]; }
+      if (t >= STOPS[STOPS.length - 1].t) { s0 = STOPS[STOPS.length - 2]; s1 = STOPS[STOPS.length - 1]; }
       const f = s1.t === s0.t ? 1 : (t - s0.t) / (s1.t - s0.t);
       const ii = i * 4;
       img[ii]   = lerp(s0.r, s1.r, f);
@@ -465,11 +468,10 @@ function drawHeatmap(canvas, athletes, projection) {
       img[ii+3] = lerp(s0.a, s1.a, f);
     }
 
-    // Step 5: write to small canvas, scale up smoothly to full canvas
+    // Write small canvas, scale up to full resolution
     const small = document.createElement('canvas');
     small.width = sw; small.height = sh;
-    const sctx = small.getContext('2d');
-    sctx.putImageData(new ImageData(img, sw, sh), 0, 0);
+    small.getContext('2d').putImageData(new ImageData(img, sw, sh), 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(small, 0, 0, sw, sh, 0, 0, W, H);
