@@ -255,7 +255,8 @@ function resolveHometownCoords(hometown) {
   const bad = /\b(championship|championships|invitational|classic|relays?|cross.?country|indoor|outdoor|university|college)\b/i;
   if (bad.test(city)) return null;
   if (!STATE_CAPITALS[state]) return null;
-  return CITY_COORDS[s] || STATE_CAPITALS[state];
+  // No state-capital fallback — unknown cities return null (honest: no data)
+  return CITY_COORDS[s] || null;
 }
 
 // ── SUPABASE DATA TRANSFORMER ─────────────────────────────────────────────────
@@ -324,9 +325,13 @@ function transformAthlete(raw, index) {
   // Merge both sources
   const events = [...new Set([...eventsFromColumn, ...eventsFromPerfs])];
 
-  // Only use hometown if it's a real "City, ST" value
   const hometown = raw.hometown || "";
-  const hometownCoords = resolveHometownCoords(hometown);
+  let hometownCoords = resolveHometownCoords(hometown);
+  const collegeCoords = getCollegeCoords(college);
+  // Null out if hometown is within 12 miles of the college campus.
+  // Athletic.net often stores the college city as the athlete's "hometown"
+  // when no real hometown is listed — this filters that scraper artifact.
+  if (hometownCoords && collegeCoords && haversine(hometownCoords, collegeCoords) <= 12) hometownCoords = null;
 
   return {
     id: raw.id || `idx_${index}`,
@@ -344,7 +349,7 @@ function transformAthlete(raw, index) {
     hsYear: raw.hs_grad_year || null,
     collegeYear: raw.college_year || null,
     gender: raw.gender || "M",
-    collegeCoords: getCollegeCoords(college),
+    collegeCoords,
     tfrrsUrl: raw.tfrrs_url || null,
   };
 }
