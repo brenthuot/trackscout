@@ -329,9 +329,6 @@ def parse_page(text: str) -> list[dict]:
 
 
 def scrape_page(page, url: str, school: str) -> list[dict]:
-    # Use "load" (not "networkidle") — athletic sites never stop firing ad/analytics
-    # requests so networkidle always times out. "load" fires when DOM + resources are
-    # ready, then we sleep to let JS render the roster cards.
     try:
         page.goto(url, timeout=45000, wait_until="load")
     except PlaywrightTimeout:
@@ -341,7 +338,6 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
         log.error(f"  Error fetching {url}: {e}")
         return []
 
-    # Wait for JS roster rendering
     time.sleep(3.5)
 
     try:
@@ -352,18 +348,25 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
 
     athletes = parse_page(text)
 
-    # If nothing found, wait longer and retry once (some pages lazy-load on scroll)
+    # Retry with scroll if nothing found
     if not athletes:
-        log.debug(f"  No athletes on first parse, waiting 4s and retrying…")
         time.sleep(4.0)
         try:
-            # Scroll to trigger lazy loading
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(1.5)
             text = page.inner_text("body")
             athletes = parse_page(text)
         except Exception:
             pass
+
+    # Debug: print a snippet so we can see what the page actually contains
+    if not athletes:
+        # Find the word "Hometown" in the text to see its context
+        ht_idx = text.find("Hometown")
+        if ht_idx != -1:
+            log.warning(f"  'Hometown' found but not parsed. Context: {repr(text[max(0,ht_idx-50):ht_idx+150])}")
+        else:
+            log.warning(f"  No 'Hometown' text found at all. Page snippet: {repr(text[500:1000])}")
 
     log.info(f"  {len(athletes)} athletes parsed — {school}")
     return athletes
@@ -411,11 +414,26 @@ def run(conf_filter=None, school_filter=None, limit=9999, dry_run=False, overwri
     pending = []
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        ctx = browser.new_context(user_agent=(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        ))
+        browser = pw.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ]
+        )
+        ctx = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 800},
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
+        # Hide the webdriver flag that bot-detection scripts check
+        ctx.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
         pg = ctx.new_page()
         pg.set_default_timeout(45000)
         last_school = None
