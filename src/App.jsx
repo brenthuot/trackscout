@@ -495,11 +495,16 @@ function drawHeatmap(canvas, athletes, projection) {
 // ── US MAP ────────────────────────────────────────────────────────────────────
 function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, highlightHometown, mapMode, selectedStates}) {
   const svgRef=useRef(null), canvasRef=useRef(null), projRef=useRef(null);
-  const [geo,setGeo]=useState(null), [tooltip,setTooltip]=useState(null);
+  const [geo,setGeo]=useState(null), [counties,setCounties]=useState(null), [tooltip,setTooltip]=useState(null);
   const FIPS_ABBR={"01":"AL","02":"AK","04":"AZ","05":"AR","06":"CA","08":"CO","09":"CT","10":"DE","11":"DC","12":"FL","13":"GA","15":"HI","16":"ID","17":"IL","18":"IN","19":"IA","20":"KS","21":"KY","22":"LA","23":"ME","24":"MD","25":"MA","26":"MI","27":"MN","28":"MS","29":"MO","30":"MT","31":"NE","32":"NV","33":"NH","34":"NJ","35":"NM","36":"NY","37":"NC","38":"ND","39":"OH","40":"OK","41":"OR","42":"PA","44":"RI","45":"SC","46":"SD","47":"TN","48":"TX","49":"UT","50":"VT","51":"VA","53":"WA","54":"WV","55":"WI","56":"WY"};
 
   useEffect(() => {
-    const load = tj => { fetch("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json").then(r=>r.json()).then(us=>setGeo(tj.feature(us,us.objects.states))); };
+    const load = tj => {
+      fetch("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json").then(r=>r.json()).then(us=>{
+        setGeo(tj.feature(us,us.objects.states));
+        setCounties(tj.feature(us,us.objects.counties));
+      });
+    };
     if (window.topojson) { load(window.topojson); return; }
     const sc=document.createElement("script"); sc.src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"; sc.onload=()=>load(window.topojson); document.head.appendChild(sc);
   }, []);
@@ -536,7 +541,68 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
       })
       .style("cursor","default");
 
-    if (mapMode === "heatmap") return;
+    if (mapMode === "heatmap") {
+      if (!counties) return;
+      // Build count per county using unique coords (fast: ~106 cities × 3100 counties)
+      const coordCounts = {};
+      athletes.forEach(a => {
+        if (!a.hometownCoords) return;
+        const key = a.hometownCoords[0] + "," + a.hometownCoords[1];
+        coordCounts[key] = (coordCounts[key] || { coords: a.hometownCoords, n: 0 });
+        coordCounts[key].n++;
+      });
+      const countyCount = {};
+      Object.values(coordCounts).forEach(({ coords, n }) => {
+        for (const county of counties.features) {
+          if (d3.geoContains(county, [coords[1], coords[0]])) {
+            countyCount[county.id] = (countyCount[county.id] || 0) + n;
+            break;
+          }
+        }
+      });
+      const counts = Object.values(countyCount).filter(v => v > 0);
+      if (!counts.length) return;
+      counts.sort((a,b) => a-b);
+      const mx = counts[Math.floor(counts.length * 0.98)] || counts[counts.length-1];
+      const GAMMA = 0.4;
+      // Warm palette matching density scale
+      const palette = (t) => {
+        const stops = [
+          [0,   [230,220,210]],
+          [0.15,[255,230,180]],
+          [0.30,[252,175, 80]],
+          [0.48,[240,105, 22]],
+          [0.65,[216, 46,  4]],
+          [0.82,[170, 12,  1]],
+          [1.0, [108,  0,  0]],
+        ];
+        let s0=stops[0], s1=stops[1];
+        for (let k=0;k<stops.length-1;k++) {
+          if (t>=stops[k][0]&&t<=stops[k+1][0]){s0=stops[k];s1=stops[k+1];break;}
+        }
+        if (t>=stops[stops.length-1][0]) {s0=stops[stops.length-2];s1=stops[stops.length-1];}
+        const f=s1[0]===s0[0]?1:(t-s0[0])/(s1[0]-s0[0]);
+        const r=Math.round(s0[1][0]+(s1[1][0]-s0[1][0])*f);
+        const gg=Math.round(s0[1][1]+(s1[1][1]-s0[1][1])*f);
+        const b=Math.round(s0[1][2]+(s1[1][2]-s0[1][2])*f);
+        return `rgb(${r},${gg},${b})`;
+      };
+      g.selectAll("path.county")
+        .data(counties.features)
+        .enter().append("path")
+        .attr("class","county")
+        .attr("d", path)
+        .attr("fill", d => {
+          const n = countyCount[d.id] || 0;
+          if (n === 0) return "#E6E7EE";
+          const t = Math.pow(n / mx, GAMMA);
+          return palette(Math.min(1, t));
+        })
+        .attr("stroke","rgba(255,255,255,0.18)")
+        .attr("stroke-width", 0.3);
+      return;
+    }
+
 
     try {
     const stateFiltered = (hasStateFilter && mapMode==="flows")
@@ -602,7 +668,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
       });
     }
     } catch(e) { console.error("Map render error:", e.message, e.stack); }
-  }, [geo,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates]);
+  }, [geo,counties,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates]);
 
   useEffect(() => {
     try {
