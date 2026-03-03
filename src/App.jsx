@@ -405,7 +405,7 @@ function drawHeatmap(canvas, athletes, projection) {
     // Separable box blur — 3 passes ≈ gaussian
     // radius = 3% of half-width ≈ 14px at half-res = 28px on screen
     // This blends neighboring cities but keeps distant regions distinct
-    const radius = Math.max(2, Math.round(sw * 0.005));
+    const radius = Math.max(1, Math.round(sw * 0.002));
     const tmp = new Float32Array(N);
 
     for (let pass = 0; pass < 3; pass++) {
@@ -510,7 +510,7 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
     g.selectAll("path.state").data(geo.features).join("path")
       .attr("class","state").attr("d",path)
       .attr("fill",d=>{
-        if(mapMode==="heatmap") return "#FFFFFF";
+        if(mapMode==="heatmap") return "#E6E7EE";
         const abbr=FIPS_ABBR[String(d.id).padStart(2,"0")];
         if(!hasStateFilter) return "#E6E7EE";
         return selectedStates.includes(abbr)?"#FCC399":"#F1F2F5";
