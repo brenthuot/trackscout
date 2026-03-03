@@ -1635,8 +1635,12 @@ export default function App() {
   };
 
   // ── Filtered list — depends on athletes state ──────────────────────────────
-  const filtered = useMemo(() => applyFilters(athletes, filters, search, performanceRanges), [athletes, filters, search, performanceRanges]);
-  const overallAvg = useMemo(() => { const withCoords=filtered.filter(a=>a.hometownCoords); return withCoords.length ? Math.round(withCoords.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/withCoords.length) : 0; }, [filtered]);
+  const filtered = useMemo(() => {
+    const base = applyFilters(athletes, filters, search, performanceRanges);
+    if (!selectedStates.length) return base;
+    return base.filter(a => selectedStates.includes(getState(a.hometown)));
+  }, [athletes, filters, search, performanceRanges, selectedStates]);
+  const overallAvg = useMemo(() => { const withCoords=filtered.filter(a=>a.hometownCoords&&a.collegeCoords); return withCoords.length ? Math.round(withCoords.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/withCoords.length) : 0; }, [filtered]);
   const hasFilters = filters.events.length>0||filters.conference||filters.college||filters.hsYear||filters.collegeYear||search||filters.season!=="all"||selectedStates.length>0;
 
   const handleAthleteClick = a => { setSelectedAthlete(s=>s?.id===a.id?null:a); setRightTab("athlete"); };
