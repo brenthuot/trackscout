@@ -49,6 +49,9 @@ STATE_ABBR = {
         "WI","WY","DC"]},
 }
 
+# Subset of STATE_ABBR: full state name → 2-letter code (used for pattern building)
+FULL_TO_ABBR = {k: v for k, v in STATE_ABBR.items() if len(k) > 2}
+
 EXPAND_ABBR = {
     "Ala":"Alabama","Ariz":"Arizona","Ark":"Arkansas","Calif":"California",
     "Colo":"Colorado","Conn":"Connecticut","Del":"Delaware","Fla":"Florida",
