@@ -405,7 +405,7 @@ function drawHeatmap(canvas, athletes, projection) {
     // Separable box blur — 3 passes ≈ gaussian
     // radius = 3% of half-width ≈ 14px at half-res = 28px on screen
     // This blends neighboring cities but keeps distant regions distinct
-    const radius = Math.max(3, Math.round(sw * 0.03));
+    const radius = Math.max(2, Math.round(sw * 0.005));
     const tmp = new Float32Array(N);
 
     for (let pass = 0; pass < 3; pass++) {
