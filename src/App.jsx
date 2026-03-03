@@ -369,37 +369,93 @@ function drawHeatmap(canvas, athletes, projection) {
     const W = canvas.width, H = canvas.height;
     if (!W || !H || W < 10 || H < 10) return;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, W, H);
-
     const pts = athletes
       .filter(a => a && a.hometownCoords)
       .map(a => { try { return projection([a.hometownCoords[1], a.hometownCoords[0]]); } catch(e) { return null; } })
-      .filter(p => p && isFinite(p[0]) && isFinite(p[1]) && p[0] > 0 && p[1] > 0 && p[0] < W && p[1] < H);
+      .filter(p => p && isFinite(p[0]) && isFinite(p[1]) && p[0] > -100 && p[1] > -100 && p[0] < W+100 && p[1] < H+100);
 
     if (!pts.length) return;
 
-    // Draw warm radial gradient blobs — no offscreen canvas, no filter API, no getImageData
-    // Overlapping gradients with "lighter" composite naturally darken dense areas
-    ctx.globalCompositeOperation = "source-over";
-    const R = Math.max(25, Math.round(W * 0.048));
+    // ── Step 1: dot canvas ────────────────────────────────────────────────────
+    // Work at half resolution for speed, scale up at the end
+    const SCALE = 0.5;
+    const sw = Math.ceil(W * SCALE), sh = Math.ceil(H * SCALE);
 
+    const off = document.createElement('canvas');
+    off.width = sw; off.height = sh;
+    const octx = off.getContext('2d');
+    const dotR = Math.max(2, Math.round(4 * SCALE));
+    octx.fillStyle = '#000';
     pts.forEach(([px, py]) => {
-      const g = ctx.createRadialGradient(px, py, 0, px, py, R);
-      g.addColorStop(0,   "rgba(210, 65, 15, 0.22)");
-      g.addColorStop(0.35,"rgba(210, 65, 15, 0.10)");
-      g.addColorStop(0.7, "rgba(240,120, 40, 0.04)");
-      g.addColorStop(1,   "rgba(240,120, 40, 0)");
-      ctx.fillStyle = g;
-      ctx.fillRect(Math.max(0, px - R), Math.max(0, py - R),
-                   Math.min(R*2, W - Math.max(0, px-R)),
-                   Math.min(R*2, H - Math.max(0, py-R)));
+      octx.beginPath();
+      octx.arc(px * SCALE, py * SCALE, dotR, 0, Math.PI * 2);
+      octx.fill();
     });
 
-    ctx.globalCompositeOperation = "source-over";
+    // ── Step 2: GPU blur → smooth continuous density field ───────────────────
+    const blurR = Math.max(12, Math.round(sw * 0.038));
+    const blurred = document.createElement('canvas');
+    blurred.width = sw; blurred.height = sh;
+    const bctx = blurred.getContext('2d');
+    bctx.filter = 'blur(' + blurR + 'px)';
+    bctx.drawImage(off, 0, 0);
+    bctx.filter = 'none';
+
+    // ── Step 3: read density, normalize, colorize ────────────────────────────
+    const raw = bctx.getImageData(0, 0, sw, sh).data;
+
+    // 99th-percentile normalization (ignore extreme hotspots for better mid-range color)
+    const samples = [];
+    for (let i = 0; i < raw.length; i += 4 * 4) if (raw[i] > 0) samples.push(raw[i]);
+    samples.sort((a, b) => a - b);
+    const mx = samples[Math.floor(samples.length * 0.99)] || samples[samples.length - 1] || 1;
+
+    // NOAA-style palette: white/transparent → pale peach → orange → deep red
+    const STOPS = [
+      { t: 0.00, r: 255, g: 255, b: 255, a:   0 },
+      { t: 0.04, r: 255, g: 240, b: 220, a:  30 },
+      { t: 0.10, r: 255, g: 210, b: 170, a:  90 },
+      { t: 0.20, r: 250, g: 170, b: 100, a: 150 },
+      { t: 0.35, r: 235, g: 100, b:  35, a: 195 },
+      { t: 0.55, r: 210, g:  45, b:  10, a: 220 },
+      { t: 0.75, r: 170, g:  15, b:   5, a: 235 },
+      { t: 1.00, r: 110, g:   0, b:   0, a: 248 },
+    ];
+
+    const lerp = (a, b, t) => Math.round(a + (b - a) * t);
+
+    const colorData = new Uint8ClampedArray(sw * sh * 4);
+    for (let i = 0; i < sw * sh; i++) {
+      const v = raw[i * 4];
+      if (v < 3) continue;
+      const t = Math.min(1, v / mx);
+
+      let s0 = STOPS[0], s1 = STOPS[1];
+      for (let k = 0; k < STOPS.length - 1; k++) {
+        if (t >= STOPS[k].t && t <= STOPS[k + 1].t) { s0 = STOPS[k]; s1 = STOPS[k + 1]; break; }
+      }
+      const f = s1.t === s0.t ? 1 : (t - s0.t) / (s1.t - s0.t);
+      const ii = i * 4;
+      colorData[ii]     = lerp(s0.r, s1.r, f);
+      colorData[ii + 1] = lerp(s0.g, s1.g, f);
+      colorData[ii + 2] = lerp(s0.b, s1.b, f);
+      colorData[ii + 3] = lerp(s0.a, s1.a, f);
+    }
+
+    // ── Step 4: write to a small canvas, scale up to full canvas ─────────────
+    const colorCanvas = document.createElement('canvas');
+    colorCanvas.width = sw; colorCanvas.height = sh;
+    const cctx = colorCanvas.getContext('2d');
+    cctx.putImageData(new ImageData(colorData, sw, sh), 0, 0);
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(colorCanvas, 0, 0, sw, sh, 0, 0, W, H);
+
   } catch(e) {
-    console.error("drawHeatmap error:", e);
+    console.error('drawHeatmap error:', e);
   }
 }
 
