@@ -671,28 +671,18 @@ function USMap({athletes, onAthleteClick, selectedAthlete, highlightCollege, hig
   }, [geo,counties,athletes,selectedAthlete,highlightCollege,highlightHometown,mapMode,selectedStates]);
 
   useEffect(() => {
+    // Canvas is no longer used for heatmap (counties drawn in SVG) — always keep it clear
     try {
-      if (!canvasRef.current || !svgRef.current) return;
-      if (mapMode !== "heatmap" || !projRef.current) {
-        const ctx = canvasRef.current.getContext("2d");
-        if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-        return;
-      }
-      // Sync canvas pixel dimensions to SVG layout size (SVG is block-positioned so it always has correct dims)
-      const W = svgRef.current.clientWidth || 960;
-      const H = svgRef.current.clientHeight || 560;
-      canvasRef.current.width = W;
-      canvasRef.current.height = H;
-      drawHeatmap(canvasRef.current, athletes, projRef.current);
-    } catch(e) {
-      console.error("Heatmap effect error:", e);
-    }
-  }, [mapMode, athletes, geo]);
+      if (!canvasRef.current) return;
+      const ctx = canvasRef.current.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    } catch(e) {}
+  }, [mapMode]);
 
   return (
     <div style={{position:"relative",width:"100%",height:"100%"}}>
       <svg ref={svgRef} style={{width:"100%",height:"100%",display:"block"}}/>
-      <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",opacity:mapMode==="heatmap"?1:0,transition:"opacity 0.3s",width:"100%",height:"100%"}}/>
+      <canvas ref={canvasRef} style={{position:"absolute",top:0,left:0,pointerEvents:"none",opacity:0,transition:"opacity 0.3s",width:"100%",height:"100%"}}/>
       {tooltip && (
         <div style={{position:"absolute",left:tooltip.x+14,top:tooltip.y-8,background:"#FFFFFF",border:`1px solid ${T.orange}`,borderRadius:9,padding:"10px 14px",pointerEvents:"none",zIndex:100,boxShadow:`0 6px 28px rgba(247,105,0,0.18)`,minWidth:180}}>
           <div style={{color:T.orange,fontWeight:800,fontSize:14,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>{tooltip.a.name}</div>
