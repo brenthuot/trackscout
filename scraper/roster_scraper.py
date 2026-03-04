@@ -15,6 +15,7 @@ Usage:
 """
 
 import os, re, time, logging, argparse, unicodedata
+import requests as _requests
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from supabase import create_client, Client
@@ -75,8 +76,7 @@ ROSTERS = [
     {"school":"Duke",             "conf":"ACC","gender":"B","url":"https://goduke.com/sports/track-and-field/roster"},
     {"school":"Florida State",    "conf":"ACC","gender":"M","url":"https://seminoles.com/sports/mens-track-and-field/roster"},
     {"school":"Florida State",    "conf":"ACC","gender":"F","url":"https://seminoles.com/sports/womens-track-and-field/roster"},
-    {"school":"Georgia Tech",     "conf":"ACC","gender":"M","url":"https://ramblinwreck.com/sports/m-track/roster/"},
-    {"school":"Georgia Tech",     "conf":"ACC","gender":"F","url":"https://ramblinwreck.com/sports/w-track/roster/"},
+    {"school":"Georgia Tech", "conf":"ACC", "gender":"B", "url":"https://ga.milesplit.com/teams/1085-georgia-tech/roster", "site":"milesplit"},
     {"school":"Louisville",       "conf":"ACC","gender":"B","url":"https://gocards.com/sports/track-and-field/roster"},
     {"school":"Miami",            "conf":"ACC","gender":"B","url":"https://miamihurricanes.com/sports/track/roster/"},
     {"school":"NC State",         "conf":"ACC","gender":"B","url":"https://gopack.com/sports/track-and-field/roster"},
@@ -719,56 +719,62 @@ def _extract_from_merged(blob: str):
 
 def _looks_like_schedule(text: str) -> bool:
     """Return True if the page text looks like schedule/nav content, not a roster."""
+    import re as _re
     sched = (
         text.count("FINAL")
         + text.count("Final")
-        + text.count("Completed")           # Virginia, Penn State style
-        + text.count("Toggle Media Overlay") # Ole Miss
-        + text.count("Track & Field\nLinks") # standard Sidearm schedule rows
+        + text.count("Completed")              # Virginia, Penn State style
+        + text.count("Toggle Media Overlay")   # Ole Miss
+        + text.count("Track & Field\nLinks")   # standard Sidearm schedule rows
         + text.count("Track and Field\nLinks")
         + text.count("Track & Field\nAWAY")
         + text.count("Track & Field\nHOME")
-        + text.count("TRACK\n")             # Wake Forest
-        + text.count("All Day\n")           # Clemson / Big 12 schedule
-        + text.count("ALL DAY")             # Clemson uppercase variant
-        + text.count("TBA\n")               # LSU / SEC schedule
-        + (10 if text.count("Schedule\nRoster\nNews\n") >= 3 else 0)  # pure nav
+        + text.count("Track and Field\nHOME")
+        + text.count("Track and Field\nAWAY")
+        + text.count("TRACK\n")               # Wake Forest
+        + text.count("All Day\n")             # Clemson / Big 12 schedule
+        + text.count("ALL DAY")               # Clemson uppercase variant
+        + text.count("TBA\n")                 # LSU / SEC schedule
+        + len(_re.findall(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}, 20\d{2}\b', text))  # Arizona State score dates
+        + (10 if text.count("Schedule\nRoster\nNews\n") >= 3 else 0)   # nav-only (title case)
+        + (10 if text.count("SCHEDULE\nROSTER\nNEWS") >= 3 else 0)   # nav-only (Wyoming uppercase)
     )
-    roster = (
-        text.count("Hometown") + text.count("HOMETOWN")
-        + text.count("Full Bio") + text.count("FULL BIO")
-        + text.count("Full Bio\n")
-    )
+    # Only "Hometown"/"HOMETOWN" are reliable roster-only signals.
+    # "Full Bio" can appear in sidebars/footers on schedule pages — exclude it.
+    roster = text.count("Hometown") + text.count("HOMETOWN")
     return sched >= 3 and roster == 0
 
 
 
 def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
     """
-    Pattern C2: Oregon-style table where header columns are each on their own
-    line (no tabs in header) but data rows ARE tab-separated.
+    Pattern C2: Table where each column header is on its own standalone line,
+    but data rows ARE tab-separated.
 
-    Raw text example:
-        FULL NAME            <- standalone
-        POS.                 <- standalone
-        HOMETOWN             <- standalone (this triggers us)
-        HIGH SCHOOL/...      <- standalone
-                             <- blank
-        Cassandra Atkins\tJumps\tDes Moines, Wash.\tFederal Way HS
+    Two sub-formats:
+      Oregon-style: name IS first tab cell
+          FULL NAME / POS. / HOMETOWN / HIGH SCHOOL
+          Cassandra Atkins\tJumps\tDes Moines, Wash.\tFederal Way HS
+
+      Iowa/UTSA-style: name is on its OWN LINE above the tab row
+          Name / Position / Class / Hometown / High School
+          David Akhalu          <- name on own line
+          Sprints\tFr.\tOgun State, Nigeria\tYakub Memorial
     """
     HEADER_WORDS = {
         "full name", "name", "pos.", "pos", "position", "events", "event",
         "year", "class", "yr", "yr.", "ht", "ht.", "height",
         "high school/previous school", "high school", "previous school",
         "last school", "hometown / previous school", "hometown / high school",
+        "connect",
     }
     results = []
     i = 0
     while i < len(lines):
         line = lines[i]
-        # Trigger: standalone "HOMETOWN" line (no tabs)
-        if re.match(r"^HOMETOWN", line, re.I) and "\t" not in line:
-            # Walk back to find the start of the vertical header block
+        # Trigger: standalone "HOMETOWN" / "Hometown" line (no tabs)
+        if re.match(r"^HOMETOWN$", line, re.I) and "\t" not in line:
+            # Walk back to find vertical header block
             header_cols = []
             j = i - 1
             while j >= 0:
@@ -779,22 +785,43 @@ def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
                     j -= 1
                 else:
                     break
-            header_cols.append("hometown")  # this line
+            header_cols.append("hometown")
             ht_col = len(header_cols) - 1
+
+            # Detect Iowa/UTSA format: "name" or "full name" is first header AND
+            # the name appears on its own line above the tab row (not in cells[0])
+            name_on_own_line = (
+                header_cols[0] in ("name", "full name") if header_cols else False
+            )
+            if name_on_own_line:
+                # In the data row, name column is absent → shift ht_col left by 1
+                ht_col = max(0, ht_col - 1)
 
             # Skip remaining header-like lines below HOMETOWN
             i += 1
             while i < len(lines) and "\t" not in lines[i]:
                 i += 1
 
-            # Parse tab-separated data rows
+            # Parse data rows
+            prev_name = None  # for name-on-own-line format
             while i < len(lines):
                 row = lines[i]
                 if "\t" not in row:
-                    break
+                    # Could be a standalone name (Iowa format) — remember it
+                    cand = row.strip()
+                    if (cand and re.match(r"[A-Z][a-z]", cand)
+                            and 2 <= len(cand.split()) <= 5
+                            and not any(s.lower() in cand.lower() for s in SKIP_WORDS)
+                            and not re.search(r"\d{4}|http|\.com|@", cand)):
+                        prev_name = cand
+                    i += 1
+                    continue
                 cells = [c.strip() for c in row.split("\t")]
                 if len(cells) > ht_col:
-                    name = cells[0] if cells[0] else (cells[1] if len(cells) > 1 else "")
+                    if name_on_own_line:
+                        name = prev_name or ""
+                    else:
+                        name = cells[0] if cells[0] else ""
                     raw_ht = re.split(r"\s*/\s*", cells[ht_col])[0].strip()
                     if name and raw_ht and len(name) >= 4:
                         if name.isupper():
@@ -802,9 +829,121 @@ def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
                         ht = _find_ht_in_blob(raw_ht)
                         if ht:
                             results.append({"name": name, "hometown": ht})
+                prev_name = None  # reset after consuming
                 i += 1
             continue
         i += 1
+    return results
+
+
+_MS_SESSION = None
+
+def _get_ms_session():
+    global _MS_SESSION
+    if _MS_SESSION is None:
+        _MS_SESSION = _requests.Session()
+        _MS_SESSION.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        })
+    return _MS_SESSION
+
+
+def _ms_parse_profile(html: str):
+    """
+    Extract hometown from a MileSplit athlete profile page.
+
+    The rendered page text contains, in order:
+        [Athlete Name]
+        [College]
+        [College City, ST]          <- skip
+        [High School Name]
+        Class of YYYY
+        City, ST                    <- this is the hometown
+    """
+    # Strip all HTML tags to get plain text lines
+    text = re.sub(r'<script[^>]*>.*?</script>', ' ', html, flags=re.S)
+    text = re.sub(r'<style[^>]*>.*?</style>', ' ', text, flags=re.S)
+    text = re.sub(r'<[^>]+>', '\n', text)
+    text = re.sub(r'&amp;', '&', text)
+    text = re.sub(r'&nbsp;', ' ', text)
+    text = re.sub(r'&#\d+;', '', text)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    for i, line in enumerate(lines):
+        if re.match(r"Class of \d{4}$", line) and i + 1 < len(lines):
+            ht = parse_hometown(lines[i + 1])
+            if ht:
+                return ht
+    return None
+
+
+def scrape_milesplit_page(roster_url: str, school: str) -> list[dict]:
+    """
+    MileSplit roster: fetch the roster page, extract athlete profile URLs,
+    then fetch each profile to read "Class of YYYY / City, ST" hometown.
+    Uses requests (not Playwright) since MileSplit is server-rendered.
+    """
+    sess = _get_ms_session()
+    log.info(f"  MileSplit mode: {roster_url}")
+
+    try:
+        resp = sess.get(roster_url, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        log.error(f"  MileSplit roster fetch error: {e}")
+        return []
+
+    # Extract athlete profile links: href="/athletes/ID-name" or full URL
+    # Format on page: <a href="https://XX.milesplit.com/athletes/ID-slug">Last, First</a>
+    profile_links = re.findall(
+        r'href="(https?://[a-z]{2}\.milesplit\.com/athletes/\d+-[^"]+)"[^>]*>\s*([^<]+)</a>',
+        resp.text
+    )
+    # Also match www.milesplit.com athlete links (for international athletes)
+    profile_links += re.findall(
+        r'href="(https?://www\.milesplit\.com/athletes/\d+-[^"]+)"[^>]*>\s*([^<]+)</a>',
+        resp.text
+    )
+
+    # Deduplicate by athlete ID
+    seen_ids = set()
+    to_fetch = []
+    for url, raw_name in profile_links:
+        m = re.search(r"/athletes/(\d+)-", url)
+        if not m:
+            continue
+        athlete_id = m.group(1)
+        if athlete_id in seen_ids:
+            continue
+        seen_ids.add(athlete_id)
+        # Normalise name "Last, First" → "First Last"
+        name = raw_name.strip()
+        if "," in name:
+            parts = name.split(",", 1)
+            name = f"{parts[1].strip()} {parts[0].strip()}"
+        to_fetch.append((name, url))
+
+    log.info(f"  MileSplit: {len(to_fetch)} athlete profiles to fetch for {school}")
+    results = []
+    for name, profile_url in to_fetch:
+        try:
+            presp = sess.get(profile_url, timeout=10)
+            if presp.status_code != 200:
+                continue
+            ht = _ms_parse_profile(presp.text)
+            if ht:
+                results.append({"name": name, "hometown": ht})
+            time.sleep(0.4)   # polite crawl rate
+        except Exception as e:
+            log.debug(f"  MileSplit profile error for {name}: {e}")
+            continue
+
+    log.info(f"  MileSplit: {len(results)} hometowns parsed for {school}")
     return results
 
 
@@ -851,6 +990,11 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
         log.info(f"  Schedule content detected — trying roster tab click")
         clicked = False
         for selector in [
+            # Track-specific first (avoid clicking Football/Basketball Roster by accident)
+            'a[href*="track"][href*="roster"]',
+            'a[href*="track-and-field"][href*="roster"]',
+            'a[href*="track_and_field"][href*="roster"]',
+            # Sidearm sub-nav
             'li:has-text("Roster") > a',
             '.sidearm-navigation-sub-links a:has-text("Roster")',
             'nav a[href*="/roster"]',
@@ -980,7 +1124,11 @@ def run(conf_filter=None, school_filter=None, limit=9999, dry_run=False, overwri
 
             time.sleep(PAGE_DELAY)
             stats["pages"] += 1
-            athletes = scrape_page(pg, url, school)
+            site = entry.get("site", "sidearm")
+            if site == "milesplit":
+                athletes = scrape_milesplit_page(url, school)
+            else:
+                athletes = scrape_page(pg, url, school)
             stats["found"] += len(athletes)
 
             for a in athletes:
