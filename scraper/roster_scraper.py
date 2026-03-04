@@ -325,11 +325,23 @@ _YEAR_RE = re.compile(
 )
 
 NON_CITY_STARTS = {
+    # Academic institution / department words (Maryland format)
     "college", "university", "school", "department", "sciences", "science",
     "arts", "art", "business", "engineering", "program", "studies",
     "management", "communications", "humanities", "education", "liberal",
     "applied", "natural", "political", "computer", "information",
     "environmental", "wharton", "kellogg", "haas", "stern",
+    "kinesiology", "sociology", "journalism", "psychology", "biology",
+    "finance", "chemistry", "physics", "mathematics", "accounting",
+    "neuroscience", "economics", "architecture", "philosophy", "history",
+    "anthropology", "geography", "statistics", "criminology", "public",
+    "international", "relations", "communication", "health", "nutrition",
+    "justice", "instruction", "family", "veterinary", "biochemistry",
+    # Track & field event words (Wake Forest format — event merged with city)
+    "distance", "mid-distance", "sprints", "hurdles", "throws", "jumps",
+    "multi", "multis", "vault", "steeplechase", "steeple", "heptathlon",
+    "decathlon", "pentathlon", "discus", "hammer", "javelin", "shot",
+    "pole",
 }
 
 
@@ -826,7 +838,8 @@ def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
                     if name_on_own_line:
                         name = prev_name or ""
                     else:
-                        name = cells[0] if cells[0] else ""
+                        # Oregon rows have a leading tab → cells[0]="" and name is cells[1]
+                        name = cells[0] if cells[0] else (cells[1] if len(cells) > 1 else "")
                     raw_ht = re.split(r"\s*/\s*", cells[ht_col])[0].strip()
                     if name and raw_ht and len(name) >= 4:
                         if name.isupper():
@@ -1006,7 +1019,15 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
                     'a[href*="/roster"]'
                 ];
                 for (const sel of selectors) {
-                    const el = document.querySelector(sel);
+                    const candidates = Array.from(document.querySelectorAll(sel));
+                    // Exclude season-history and year-archive links (Nebraska issue)
+                    const el = candidates.find(a =>
+                        !a.href.includes('/history') &&
+                        !a.href.includes('/records') &&
+                        !a.href.includes('/statistics') &&
+                        !a.href.includes('/year') &&
+                        !a.href.match('/20[0-9]{2}')
+                    );
                     if (el) { el.click(); return true; }
                 }
                 return false;
@@ -1032,12 +1053,12 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
         if not athletes:
             clicked = False
             for selector in [
-                'a[href*="track"][href*="roster"]',
-                'a[href*="track-and-field"][href*="roster"]',
+                'a[href*="track"][href*="roster"]:not([href*="history"]):not([href*="records"])',
+                'a[href*="track-and-field"][href*="roster"]:not([href*="history"])',
                 'li:has-text("Roster") > a',
                 '.sidearm-navigation-sub-links a:has-text("Roster")',
-                'nav a[href*="/roster"]',
-                'a[href*="/roster"]:not([href*="schedule"]):not([href*="news"])',
+                'nav a[href*="/roster"]:not([href*="history"]):not([href*="records"])',
+                'a[href*="/roster"]:not([href*="schedule"]):not([href*="news"]):not([href*="history"])',
                 'a:has-text("Roster")',
             ]:
                 try:
