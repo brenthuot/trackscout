@@ -735,14 +735,19 @@ def _looks_like_schedule(text: str) -> bool:
         + text.count("All Day\n")             # Clemson / Big 12 schedule
         + text.count("ALL DAY")               # Clemson uppercase variant
         + text.count("TBA\n")                 # LSU / SEC schedule
+        + len(_re.findall(r"\n Track & Field\n", text))  # Clemson (leading space)
+        + len(_re.findall(r"(?:Men's|Women's) Track and Field\n[A-Z]", text))  # Princeton
+        + text.count("LIVE RESULTS")           # Clemson schedule header
+        + text.count("RECAP\n")               # Clemson RECAP tag
         + len(_re.findall(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}, 20\d{2}\b', text))  # Arizona State score dates
         + (10 if text.count("Schedule\nRoster\nNews\n") >= 3 else 0)   # nav-only (title case)
         + (10 if text.count("SCHEDULE\nROSTER\nNEWS") >= 3 else 0)   # nav-only (Wyoming uppercase)
     )
     # Only "Hometown"/"HOMETOWN" are reliable roster-only signals.
-    # "Full Bio" can appear in sidebars/footers on schedule pages — exclude it.
+    # A real roster page has 30–100 "Hometown" labels; a schedule page sidebar
+    # may have 1–2. Require fewer than 3 to confirm this is NOT a roster.
     roster = text.count("Hometown") + text.count("HOMETOWN")
-    return sched >= 3 and roster == 0
+    return sched >= 3 and roster < 3
 
 
 
@@ -984,49 +989,104 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
         except Exception:
             pass
 
-    # Retry 2: page shows schedule/nav instead of roster content
-    # Covers: schedule tab active by default, nav-only render, slow SPA hydration
+    # Retry 2: page shows schedule/nav instead of roster — try to force roster tab
     if not athletes and _looks_like_schedule(text):
-        log.info(f"  Schedule content detected — trying roster tab click")
-        clicked = False
-        for selector in [
-            # Track-specific first (avoid clicking Football/Basketball Roster by accident)
-            'a[href*="track"][href*="roster"]',
-            'a[href*="track-and-field"][href*="roster"]',
-            'a[href*="track_and_field"][href*="roster"]',
-            # Sidearm sub-nav
-            'li:has-text("Roster") > a',
-            '.sidearm-navigation-sub-links a:has-text("Roster")',
-            'nav a[href*="/roster"]',
-            'a[href*="/roster"]:not([href*="schedule"]):not([href*="news"])',
-            'a:has-text("Roster")',
-        ]:
-            try:
-                el = page.locator(selector).first
-                if el.is_visible(timeout=2000):
-                    el.click()
-                    clicked = True
+        log.info(f"  Schedule content detected — trying roster tab strategies")
+
+        # Strategy A: JS-level click (bypasses Playwright click interception)
+        # Sidearm SPAs use anchor tags; triggering via JS is more reliable
+        js_clicked = False
+        try:
+            js_clicked = page.evaluate("""() => {
+                const selectors = [
+                    'a[href*="track"][href*="roster"]',
+                    'a[href*="track-and-field"][href*="roster"]',
+                    '.sidearm-navigation-sub-links a[href*="roster"]',
+                    'nav a[href*="/roster"]',
+                    'a[href*="/roster"]'
+                ];
+                for (const sel of selectors) {
+                    const el = document.querySelector(sel);
+                    if (el) { el.click(); return true; }
+                }
+                return false;
+            }""")
+        except Exception:
+            pass
+
+        if js_clicked:
+            # Wait for Hometown to appear (up to 12s) — confirms roster actually loaded
+            for _sig in ['text="Hometown"', 'text="HOMETOWN"', '[class*="roster"]']:
+                try:
+                    page.wait_for_selector(_sig, timeout=12000)
                     break
-            except Exception:
-                continue
-        if clicked:
-            time.sleep(5.0)
+                except Exception:
+                    continue
             try:
                 text = page.inner_text("body")
                 athletes = parse_page(text)
             except Exception:
                 pass
 
-    # Retry 3: if still empty and we didn't get roster, reload with longer wait
+        # Strategy B: DOM click via Playwright with longer post-click wait
+        if not athletes:
+            clicked = False
+            for selector in [
+                'a[href*="track"][href*="roster"]',
+                'a[href*="track-and-field"][href*="roster"]',
+                'li:has-text("Roster") > a',
+                '.sidearm-navigation-sub-links a:has-text("Roster")',
+                'nav a[href*="/roster"]',
+                'a[href*="/roster"]:not([href*="schedule"]):not([href*="news"])',
+                'a:has-text("Roster")',
+            ]:
+                try:
+                    el = page.locator(selector).first
+                    if el.is_visible(timeout=2000):
+                        el.click()
+                        clicked = True
+                        break
+                except Exception:
+                    continue
+            if clicked:
+                for _sig in ['text="Hometown"', 'text="HOMETOWN"']:
+                    try:
+                        page.wait_for_selector(_sig, timeout=12000)
+                        break
+                    except Exception:
+                        continue
+                try:
+                    text = page.inner_text("body")
+                    athletes = parse_page(text)
+                except Exception:
+                    pass
+
+    # Retry 3: if still empty, reload with a very long wait (15s) for hydration
     if not athletes and _looks_like_schedule(text):
-        log.info(f"  Click didn't help — reloading with extended wait")
+        log.info(f"  Click strategies failed — reloading with 15s wait")
         try:
-            page.reload(timeout=45000, wait_until="load")
-            time.sleep(7.0)
-            # Try waiting for any roster signal
+            page.reload(timeout=60000, wait_until="load")
+            time.sleep(10.0)
             for _sig in ['text="Hometown"', 'text="HOMETOWN"', 'text="Full Bio"']:
                 try:
-                    page.wait_for_selector(_sig, timeout=5000)
+                    page.wait_for_selector(_sig, timeout=8000)
+                    break
+                except Exception:
+                    continue
+            text = page.inner_text("body")
+            athletes = parse_page(text)
+        except Exception:
+            pass
+
+    # Retry 4: direct re-navigation to the same URL (fresh load, no SPA state)
+    if not athletes and _looks_like_schedule(text):
+        log.info(f"  Still schedule — re-navigating fresh to {url}")
+        try:
+            page.goto(url, timeout=60000, wait_until="load")
+            time.sleep(12.0)
+            for _sig in ['text="Hometown"', 'text="HOMETOWN"']:
+                try:
+                    page.wait_for_selector(_sig, timeout=8000)
                     break
                 except Exception:
                     continue
