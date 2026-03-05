@@ -1,0 +1,30 @@
+name: Geocode Hometown Backfill
+
+on:
+  workflow_dispatch:        # run manually from GitHub Actions tab
+  schedule:
+    - cron: '0 6 * * 0'    # every Sunday at 6am UTC (catches new athletes from weekly scrape)
+
+jobs:
+  geocode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120    # Nominatim at 1 req/sec: ~800 cities ≈ 15 min; plenty of headroom
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install supabase requests python-dotenv
+
+      - name: Run geocode backfill
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python geocode_backfill.py
