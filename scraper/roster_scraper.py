@@ -807,24 +807,28 @@ def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
 
             # Detect Iowa/UTSA format: "name" or "full name" is first header AND
             # the name appears on its own line above the tab row (not in cells[0])
-            name_on_own_line = (
+            # Detect Iowa/UTSA-style: name appears on its OWN standalone line
+            # (not in the tab row). Oregon has name IN cells[1] due to leading tab.
+            # We defer final format detection to the first data row.
+            name_col_is_header = (
                 header_cols[0] in ("name", "full name") if header_cols else False
             )
-            if name_on_own_line:
-                # In the data row, name column is absent → shift ht_col left by 1
-                ht_col = max(0, ht_col - 1)
+            base_ht_col = ht_col  # save before any adjustment
 
             # Skip remaining header-like lines below HOMETOWN
             i += 1
             while i < len(lines) and "\t" not in lines[i]:
                 i += 1
 
-            # Parse data rows
-            prev_name = None  # for name-on-own-line format
+            # Parse data rows — detect sub-format on first tab row
+            # leading_tab: Oregon — cells[0]="" name in cells[1], ht at base_ht_col+1
+            # name_on_own_line: Iowa/UTSA — name in prev_name, ht at base_ht_col-1
+            # normal: cells[0]=name, ht at base_ht_col
+            row_format = None   # detected lazily
+            prev_name = None
             while i < len(lines):
                 row = lines[i]
                 if "\t" not in row:
-                    # Could be a standalone name (Iowa format) — remember it
                     cand = row.strip()
                     if (cand and re.match(r"[A-Z][a-z]", cand)
                             and 2 <= len(cand.split()) <= 5
@@ -834,11 +838,24 @@ def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
                     i += 1
                     continue
                 cells = [c.strip() for c in row.split("\t")]
+
+                # Detect format on first data row
+                if row_format is None and name_col_is_header:
+                    if not cells[0]:
+                        # Leading tab: Oregon style — name in cells[1]
+                        row_format = "leading_tab"
+                        ht_col = base_ht_col + 1
+                    else:
+                        # Iowa/UTSA: name is on its own standalone line above tab row
+                        row_format = "name_on_own_line"
+                        ht_col = max(0, base_ht_col - 1)
+
                 if len(cells) > ht_col:
-                    if name_on_own_line:
+                    if row_format == "leading_tab":
+                        name = cells[1] if len(cells) > 1 else ""
+                    elif row_format == "name_on_own_line":
                         name = prev_name or ""
                     else:
-                        # Oregon rows have a leading tab → cells[0]="" and name is cells[1]
                         name = cells[0] if cells[0] else (cells[1] if len(cells) > 1 else "")
                     raw_ht = re.split(r"\s*/\s*", cells[ht_col])[0].strip()
                     if name and raw_ht and len(name) >= 4:
@@ -1039,7 +1056,7 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
             # Wait for Hometown to appear (up to 12s) — confirms roster actually loaded
             for _sig in ['text="Hometown"', 'text="HOMETOWN"', '[class*="roster"]']:
                 try:
-                    page.wait_for_selector(_sig, timeout=12000)
+                    page.wait_for_selector(_sig, timeout=7000)
                     break
                 except Exception:
                     continue
@@ -1072,7 +1089,7 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
             if clicked:
                 for _sig in ['text="Hometown"', 'text="HOMETOWN"']:
                     try:
-                        page.wait_for_selector(_sig, timeout=12000)
+                        page.wait_for_selector(_sig, timeout=7000)
                         break
                     except Exception:
                         continue
@@ -1087,10 +1104,10 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
         log.info(f"  Click strategies failed — reloading with 15s wait")
         try:
             page.reload(timeout=60000, wait_until="load")
-            time.sleep(10.0)
+            time.sleep(6.0)
             for _sig in ['text="Hometown"', 'text="HOMETOWN"', 'text="Full Bio"']:
                 try:
-                    page.wait_for_selector(_sig, timeout=8000)
+                    page.wait_for_selector(_sig, timeout=5000)
                     break
                 except Exception:
                     continue
@@ -1104,10 +1121,10 @@ def scrape_page(page, url: str, school: str) -> list[dict]:
         log.info(f"  Still schedule — re-navigating fresh to {url}")
         try:
             page.goto(url, timeout=60000, wait_until="load")
-            time.sleep(12.0)
+            time.sleep(6.0)
             for _sig in ['text="Hometown"', 'text="HOMETOWN"']:
                 try:
-                    page.wait_for_selector(_sig, timeout=8000)
+                    page.wait_for_selector(_sig, timeout=5000)
                     break
                 except Exception:
                     continue
