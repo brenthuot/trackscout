@@ -101,7 +101,7 @@ ROSTERS = [
     {"school":"Michigan State",   "conf":"Big Ten","gender":"B","url":"https://msuspartans.com/sports/track-and-field/roster"},
     {"school":"Minnesota",        "conf":"Big Ten","gender":"M","url":"https://gophersports.com/sports/mens-track-and-field/roster"},
     {"school":"Minnesota",        "conf":"Big Ten","gender":"F","url":"https://gophersports.com/sports/womens-track-and-field/roster"},
-    {"school":"Nebraska",         "conf":"Big Ten","gender":"B","url":"https://huskers.com/sports/track-and-field/roster"},
+    {"school":"Nebraska",         "conf":"Big Ten","gender":"B","url":"https://huskers.com/sports/track-and-field/roster/2025-26"},
     {"school":"Northwestern",     "conf":"Big Ten","gender":"F","url":"https://nusports.com/sports/womens-cross-country/roster"},
     {"school":"Ohio State",       "conf":"Big Ten","gender":"M","url":"https://ohiostatebuckeyes.com/sports/mens-track-field/roster"},
     {"school":"Ohio State",       "conf":"Big Ten","gender":"F","url":"https://ohiostatebuckeyes.com/sports/womens-track-field/roster"},
@@ -807,25 +807,33 @@ def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
 
             # Detect Iowa/UTSA format: "name" or "full name" is first header AND
             # the name appears on its own line above the tab row (not in cells[0])
-            # Detect Iowa/UTSA-style: name appears on its OWN standalone line
-            # (not in the tab row). Oregon has name IN cells[1] due to leading tab.
-            # We defer final format detection to the first data row.
+            # Detect Iowa/UTSA-style vs Oregon/normal: deferred to first data row.
+            # Oregon: parse_page strips leading tabs, so cells[0] = athlete name (normal).
+            # Iowa/UTSA: cells[0] = event word (e.g. "Sprints"), name is on prior line.
             name_col_is_header = (
                 header_cols[0] in ("name", "full name") if header_cols else False
             )
             base_ht_col = ht_col  # save before any adjustment
 
-            # Skip remaining header-like lines below HOMETOWN
+            # Skip remaining header-like lines below HOMETOWN,
+            # but capture any standalone athlete names encountered during skip
             i += 1
+            first_name_candidate = None
             while i < len(lines) and "\t" not in lines[i]:
+                cand = lines[i].strip()
+                if (cand and re.match(r"[A-Z][a-z]", cand)
+                        and 2 <= len(cand.split()) <= 5
+                        and cand.lower() not in HEADER_WORDS
+                        and not any(s.lower() in cand.lower() for s in SKIP_WORDS)
+                        and not re.search(r"\d{4}|http|\.com|@", cand)):
+                    first_name_candidate = cand
                 i += 1
 
             # Parse data rows — detect sub-format on first tab row
-            # leading_tab: Oregon — cells[0]="" name in cells[1], ht at base_ht_col+1
-            # name_on_own_line: Iowa/UTSA — name in prev_name, ht at base_ht_col-1
-            # normal: cells[0]=name, ht at base_ht_col
+            # name_on_own_line: Iowa/UTSA — cells[0] is an event word, name in prev_name
+            # normal (Oregon): cells[0] is the athlete name
             row_format = None   # detected lazily
-            prev_name = None
+            prev_name = first_name_candidate  # may have been captured during header skip
             while i < len(lines):
                 row = lines[i]
                 if "\t" not in row:
@@ -839,21 +847,20 @@ def _parse_vertical_header_table(lines: list[str]) -> list[dict]:
                     continue
                 cells = [c.strip() for c in row.split("\t")]
 
-                # Detect format on first data row
-                if row_format is None and name_col_is_header:
-                    if not cells[0]:
-                        # Leading tab: Oregon style — name in cells[1]
-                        row_format = "leading_tab"
-                        ht_col = base_ht_col + 1
+                # Detect format on first data row (only when "full name"/"name" is header)
+                if row_format is None and name_col_is_header and cells:
+                    c0 = cells[0].strip()
+                    # If cells[0] looks like a person name → Oregon/normal format
+                    # If cells[0] is event/class word → Iowa/UTSA name-on-own-line
+                    if c0 and re.match(r"[A-Z][a-z]+\s+[A-Z]", c0):
+                        row_format = "normal"
+                        ht_col = base_ht_col   # name in cells[0], ht at original col
                     else:
-                        # Iowa/UTSA: name is on its own standalone line above tab row
                         row_format = "name_on_own_line"
                         ht_col = max(0, base_ht_col - 1)
 
                 if len(cells) > ht_col:
-                    if row_format == "leading_tab":
-                        name = cells[1] if len(cells) > 1 else ""
-                    elif row_format == "name_on_own_line":
+                    if row_format == "name_on_own_line":
                         name = prev_name or ""
                     else:
                         name = cells[0] if cells[0] else (cells[1] if len(cells) > 1 else "")
