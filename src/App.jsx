@@ -325,8 +325,15 @@ function transformAthlete(raw, index) {
   // Merge both sources
   const events = [...new Set([...eventsFromColumn, ...eventsFromPerfs])];
 
+
   const hometown = raw.hometown || "";
-  let hometownCoords = resolveHometownCoords(hometown);
+  // Use geocoded DB coordinates first (from geocode_backfill), fall back to static lookup
+  let hometownCoords = null;
+  if (raw.hometown_lat && raw.hometown_lng) {
+    hometownCoords = [raw.hometown_lat, raw.hometown_lng];
+  } else {
+    hometownCoords = resolveHometownCoords(hometown);
+  }
   const collegeCoords = getCollegeCoords(college);
   // Null out if hometown is within 12 miles of the college campus.
   // Athletic.net often stores the college city as the athlete's "hometown"
