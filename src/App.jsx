@@ -259,6 +259,88 @@ function resolveHometownCoords(hometown) {
   return CITY_COORDS[s] || null;
 }
 
+// ── CONFERENCE TIERS (for Hidden Gem scoring) ─────────────────────────────────
+// Tier 1 = Power (athletes harder to poach). Tier 3/4 = Mid/Low major = gem zone
+const CONF_TIER = {
+  // Power 5 + Ivies
+  "SEC":1,"Big Ten":1,"ACC":1,"Big 12":1,"Pac-12":1,"Ivy League":1,
+  // High major
+  "Mountain West":2,"American":2,"Big East":2,"Atlantic 10":2,"WCC":2,
+  // Mid major — prime hidden gem territory
+  "MAC":3,"Sun Belt":3,"CUSA":3,"Big West":3,"WAC":3,"MVC":3,
+  "Patriot League":3,"CAA":3,"SoCon":3,"Big Sky":3,"OVC":3,
+  "MEAC":3,"SWAC":3,"Horizon":3,"MAAC":3,"NEC":3,
+};
+const confTier = conf => CONF_TIER[conf] || 4;
+
+// ── HIDDEN GEM SCORE ──────────────────────────────────────────────────────────
+// Score 0-100: high performance percentile at a lower-tier conference = underrecruited
+function computeGemScore(athlete, allAthletes) {
+  const events = Object.keys(athlete.collegeTimes);
+  if (!events.length) return 0;
+  let totalPct = 0, count = 0;
+  events.forEach(ev => {
+    const marks = allAthletes.map(a => a.collegeTimes[ev]).filter(Boolean);
+    if (marks.length < 5) return;
+    const mark = athlete.collegeTimes[ev];
+    const worse = isFieldEvent(ev)
+      ? marks.filter(m => m < mark).length
+      : marks.filter(m => m > mark).length;
+    totalPct += (worse / marks.length) * 100;
+    count++;
+  });
+  if (!count) return 0;
+  const avgPct = totalPct / count;
+  const tier = confTier(athlete.conference);
+  // Mid/low major multipliers amplify the score — these are the finds
+  const mult = tier >= 4 ? 1.6 : tier === 3 ? 1.4 : tier === 2 ? 1.15 : 1.0;
+  return Math.min(100, Math.round(avgPct * mult));
+}
+
+// ── CSV EXPORT ────────────────────────────────────────────────────────────────
+function exportCSV(athletes, activeEvents = []) {
+  const evCols = activeEvents.length > 0
+    ? activeEvents
+    : [...new Set(athletes.flatMap(a => Object.keys(a.collegeTimes)))].slice(0, 12);
+
+  const headers = [
+    "Name","College","Conference","College Year","Gender",
+    "Hometown","State","HS Grad Year","High School",
+    "Recruitment Distance (mi)","Transfer","Transfer From",
+    "TFRRS URL",
+    ...evCols.map(e => `Best ${e}`),
+  ];
+
+  const rows = athletes.map(a => {
+    const dist = a.hometownCoords && a.collegeCoords
+      ? Math.round(haversine(a.hometownCoords, a.collegeCoords)) : "";
+    const st = getState(a.hometown) || "";
+    return [
+      a.name, a.college, a.conference,
+      a.collegeYear ? `Year ${a.collegeYear}` : "",
+      a.gender === "M" ? "Men" : "Women",
+      a.hometown, st, a.hsYear || "",
+      a.hsName || "", dist,
+      a.isTransfer ? "Yes" : "No",
+      a.transferFrom || "",
+      a.tfrrsUrl || "",
+      ...evCols.map(ev => a.collegeTimes[ev] ? fmtTime(a.collegeTimes[ev]) : ""),
+    ];
+  });
+
+  const csv = [headers, ...rows]
+    .map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `trackscout_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── SUPABASE DATA TRANSFORMER ─────────────────────────────────────────────────
 const RELAY_EVENTS = new Set(["4x100", "4x400", "4x100m", "4x400m", "XC", "DMR", "SMR"]);
 
@@ -358,6 +440,8 @@ function transformAthlete(raw, index) {
     gender: raw.gender || "M",
     collegeCoords,
     tfrrsUrl: raw.tfrrs_url || null,
+    isTransfer: raw.is_transfer || false,
+    transferFrom: raw.transfer_from || null,
   };
 }
 
@@ -932,8 +1016,14 @@ function FilterControls({filters, setFilters, showSeason=false, selectedStates=[
   );
 }
 
-function applyFilters(athletes, filters, search="", performanceRanges={}) {
+function applyFilters(athletes, filters, search="", performanceRanges={}, distFromSchool=null, transferOnly=false) {
   return athletes.filter(a => {
+    if (transferOnly && !a.isTransfer) return false;
+    if (distFromSchool?.school && COLLEGE_COORDS[distFromSchool.school]) {
+      const sc = COLLEGE_COORDS[distFromSchool.school];
+      if (!a.hometownCoords) return false;
+      if (haversine(a.hometownCoords, sc) > distFromSchool.maxMiles) return false;
+    }
     if (filters.season && filters.season !== "all") {
       const eventsInSeason = EVENTS_CFG.filter(e=>e.season==="both"||e.season===filters.season).map(e=>e.id);
       if (!Array.isArray(a.events) || !a.events.some(e=>eventsInSeason.includes(e))) return false;
@@ -1493,7 +1583,7 @@ function PerformanceRangeInput({event, allAthletes, value, onChange}) {
 }
 
 // ── ATHLETE DETAIL ────────────────────────────────────────────────────────────
-function AthleteDetail({athlete, onClose, allAthletes=[]}) {
+function AthleteDetail({athlete, onClose, allAthletes=[], isWatched=false, onToggleWatch=()=>{}, gemScore=0, note="", onNoteChange=()=>{}}) {
   if (!athlete) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,padding:24}}>
       <div style={{fontSize:44,opacity:0.15}}>🌍</div>
@@ -1506,15 +1596,44 @@ function AthleteDetail({athlete, onClose, allAthletes=[]}) {
 
   return (
     <div style={{padding:"16px",overflowY:"auto",height:"100%"}}>
-      {/* Name + close */}
+      {/* Name + watchlist + close */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-        <div>
-          <div style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:22,fontWeight:900,letterSpacing:2}}>{athlete.name}</div>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <div style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:22,fontWeight:900,letterSpacing:2}}>{athlete.name}</div>
+            {athlete.isTransfer && (
+              <span style={{fontSize:10,background:"#7C3AED",color:"#fff",borderRadius:4,padding:"2px 7px",letterSpacing:0.5,fontFamily:"'Barlow Condensed',sans-serif"}}>
+                TRANSFER {athlete.transferFrom ? `← ${athlete.transferFrom}` : ""}
+              </span>
+            )}
+          </div>
           <div style={{color:T.offWhite,fontSize:13,marginTop:2,fontWeight:600}}>{athlete.college}</div>
           <div style={{color:T.muted,fontSize:11,marginTop:1}}>{athlete.conference}{athlete.collegeYear ? ` · Year ${athlete.collegeYear}` : ""}{athlete.gender ? ` · ${athlete.gender==="M"?"Men":"Women"}` : ""}</div>
         </div>
-        <button onClick={onClose} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,borderRadius:6,cursor:"pointer",width:26,height:26,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        <div style={{display:"flex",gap:6,flexShrink:0}}>
+          <button onClick={()=>onToggleWatch(athlete.id)}
+            title={isWatched ? "Remove from watchlist" : "Add to watchlist"}
+            style={{background:isWatched?"#FEF3C7":"none",border:`1px solid ${isWatched?"#F59E0B":T.border}`,color:isWatched?"#D97706":T.muted,borderRadius:6,cursor:"pointer",width:30,height:26,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s"}}>
+            {isWatched ? "⭐" : "☆"}
+          </button>
+          <button onClick={onClose} style={{background:"none",border:`1px solid ${T.border}`,color:T.muted,borderRadius:6,cursor:"pointer",width:26,height:26,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        </div>
       </div>
+
+      {/* Hidden Gem score */}
+      {gemScore > 0 && (
+        <div style={{background:gemScore>=80?"#FFFBEB":gemScore>=60?"#F0FDF4":T.bgCard,border:`1px solid ${gemScore>=80?"#F59E0B":gemScore>=60?"#10B981":T.border}`,borderRadius:8,padding:"8px 12px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:2,textTransform:"uppercase"}}>Hidden Gem Score</div>
+            <div style={{color:gemScore>=80?"#D97706":gemScore>=60?"#059669":T.muted,fontSize:9,marginTop:2}}>
+              {gemScore>=80?"🔥 High-value underrecruited athlete":gemScore>=60?"✅ Solid mid-major prospect":"Baseline"}
+            </div>
+          </div>
+          <div style={{color:gemScore>=80?"#D97706":gemScore>=60?"#059669":T.muted,fontSize:26,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif"}}>
+            💎{gemScore}
+          </div>
+        </div>
+      )}
 
       {/* Recruitment distance */}
       <div style={{background:T.bgCard,border:`1px solid ${dc}55`,borderRadius:9,padding:"10px 12px",marginBottom:10}}>
@@ -1540,10 +1659,22 @@ function AthleteDetail({athlete, onClose, allAthletes=[]}) {
 
       {athlete.tfrrsUrl && (
         <a href={athlete.tfrrsUrl} target="_blank" rel="noopener noreferrer"
-          style={{display:"block",marginBottom:14,textAlign:"center",color:T.orange,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textDecoration:"none",border:`1px solid ${T.orange}44`,borderRadius:6,padding:"5px 0"}}>
+          style={{display:"block",marginBottom:10,textAlign:"center",color:T.orange,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textDecoration:"none",border:`1px solid ${T.orange}44`,borderRadius:6,padding:"5px 0"}}>
           View on TFRRS →
         </a>
       )}
+
+      {/* Recruiting Notes */}
+      <div style={{marginBottom:14}}>
+        <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:5}}>Recruiting Notes</div>
+        <textarea
+          value={note}
+          onChange={e => onNoteChange(athlete.id, e.target.value)}
+          placeholder="Add notes about this recruit..."
+          rows={3}
+          style={{width:"100%",background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:6,padding:"7px 9px",fontSize:11,color:T.offWhite,fontFamily:"'Barlow',sans-serif",resize:"vertical",outline:"none",lineHeight:1.5}}
+        />
+      </div>
 
       {/* Charts — one per event, always shown */}
       {athlete.rawPerformances?.length > 0 && (() => {
@@ -1568,6 +1699,99 @@ function AthleteDetail({athlete, onClose, allAthletes=[]}) {
           </>
         );
       })()}
+    </div>
+  );
+}
+
+// ── WATCHLIST PANEL ───────────────────────────────────────────────────────────
+function WatchlistPanel({ watchlist, athletes, notes, onNoteChange, onRemove, onSelectAthlete, activeEvents }) {
+  const watched = useMemo(() =>
+    watchlist.map(id => athletes.find(a => a.id === id)).filter(Boolean),
+    [watchlist, athletes]
+  );
+
+  const [sortBy, setSortBy] = useState("added");
+
+  const sorted = useMemo(() => {
+    const arr = [...watched];
+    if (sortBy === "dist") arr.sort((a,b) => {
+      const da = a.hometownCoords && a.collegeCoords ? haversine(a.hometownCoords, a.collegeCoords) : 0;
+      const db = b.hometownCoords && b.collegeCoords ? haversine(b.hometownCoords, b.collegeCoords) : 0;
+      return db - da;
+    });
+    else if (sortBy === "name") arr.sort((a,b) => a.name.localeCompare(b.name));
+    else if (sortBy === "college") arr.sort((a,b) => a.college.localeCompare(b.college));
+    return arr;
+  }, [watched, sortBy]);
+
+  if (watched.length === 0) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12,padding:24}}>
+      <div style={{fontSize:40,opacity:0.2}}>⭐</div>
+      <div style={{color:T.dim,fontFamily:"'Barlow Condensed',sans-serif",fontSize:11,letterSpacing:3,textTransform:"uppercase",textAlign:"center",lineHeight:1.9}}>
+        No athletes on watchlist<br/>Click ⭐ in any athlete profile
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{padding:"14px",height:"100%",display:"flex",flexDirection:"column"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexShrink:0}}>
+        <div>
+          <div style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:13,fontWeight:800,letterSpacing:2,textTransform:"uppercase"}}>
+            Watchlist <span style={{color:T.dim,fontSize:11}}>({watched.length})</span>
+          </div>
+        </div>
+        <button
+          onClick={() => exportCSV(watched, activeEvents)}
+          style={{background:T.orange,border:"none",color:"#fff",borderRadius:6,padding:"5px 12px",fontSize:11,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontWeight:700}}
+        >↓ CSV</button>
+      </div>
+
+      <div style={{display:"flex",gap:4,marginBottom:10,flexShrink:0}}>
+        {[["added","Order Added"],["name","Name"],["college","School"],["dist","Distance"]].map(([v,l]) => (
+          <button key={v} onClick={()=>setSortBy(v)}
+            style={{flex:1,background:sortBy===v?T.orange:"transparent",border:`1px solid ${sortBy===v?T.orange:T.border}`,color:sortBy===v?"#fff":T.muted,borderRadius:4,padding:"3px 0",fontSize:9,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:0.5,textTransform:"uppercase"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div style={{flex:1,overflowY:"auto"}}>
+        {sorted.map(a => {
+          const dist = a.hometownCoords && a.collegeCoords ? Math.round(haversine(a.hometownCoords, a.collegeCoords)) : null;
+          const note = notes[a.id] || "";
+          return (
+            <div key={a.id} style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 11px",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                <div style={{flex:1,cursor:"pointer"}} onClick={()=>onSelectAthlete(a)}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{color:T.orange,fontFamily:"'Barlow Condensed',sans-serif",fontSize:14,fontWeight:800}}>{a.name}</span>
+                    {a.isTransfer && <span style={{fontSize:8,background:"#7C3AED",color:"#fff",borderRadius:3,padding:"1px 5px",letterSpacing:0.5}}>TRF</span>}
+                  </div>
+                  <div style={{color:T.muted,fontSize:11}}>{a.college} · {a.conference}</div>
+                  <div style={{color:T.dim,fontSize:10}}>📍 {a.hometown || "—"}</div>
+                  <div style={{display:"flex",gap:8,marginTop:3,flexWrap:"wrap"}}>
+                    {a.collegeYear && <span style={{color:T.dim,fontSize:10}}>Year {a.collegeYear}</span>}
+                    {dist && <span style={{color:distColor(dist),fontSize:10,fontWeight:700,fontFamily:"monospace"}}>{fmtDist(dist)}</span>}
+                    {a.events.slice(0,3).map(ev => (
+                      <span key={ev} style={{color:T.muted,fontSize:9,background:T.bgPanel,border:`1px solid ${T.border}`,borderRadius:3,padding:"1px 5px"}}>{ev}{a.collegeTimes[ev] ? ` ${fmtTime(a.collegeTimes[ev])}` : ""}</span>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={() => onRemove(a.id)}
+                  style={{background:"none",border:`1px solid ${T.border}`,color:T.dim,borderRadius:4,width:22,height:22,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginLeft:6}}>✕</button>
+              </div>
+              <textarea
+                value={note}
+                onChange={e => onNoteChange(a.id, e.target.value)}
+                placeholder="Recruiting notes..."
+                rows={2}
+                style={{width:"100%",background:T.bg,border:`1px solid ${T.border}`,borderRadius:5,padding:"5px 7px",fontSize:11,color:T.offWhite,fontFamily:"'Barlow',sans-serif",resize:"vertical",outline:"none",lineHeight:1.5}}
+              />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1634,6 +1858,23 @@ export default function App() {
   const [performanceRanges, setPerformanceRanges] = useState({});
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+
+  // ── Watchlist + Notes (localStorage) ──────────────────────────────────────
+  const [watchlist, setWatchlist] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ts_watchlist") || "[]"); } catch { return []; }
+  });
+  const [notes, setNotes] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ts_notes") || "{}"); } catch { return {}; }
+  });
+  useEffect(() => { localStorage.setItem("ts_watchlist", JSON.stringify(watchlist)); }, [watchlist]);
+  useEffect(() => { localStorage.setItem("ts_notes", JSON.stringify(notes)); }, [notes]);
+  const toggleWatch = id => setWatchlist(w => w.includes(id) ? w.filter(x=>x!==id) : [...w, id]);
+  const handleNoteChange = (id, text) => setNotes(n => ({...n, [id]: text}));
+
+  // ── Distance-from-school filter ────────────────────────────────────────────
+  const [distFromSchool, setDistFromSchool] = useState({ school: "", maxMiles: 300 });
+  const [transferOnly, setTransferOnly] = useState(false);
+  const [gemSort, setGemSort] = useState(false);
   const handleRangeChange = (ev, range) => setPerformanceRanges(prev => ({...prev, [ev]: range}));
   // Wrapper that also cleans up ranges for deselected events
   const setFiltersWithCleanup = updater => {
@@ -1648,12 +1889,21 @@ export default function App() {
 
   // ── Filtered list — depends on athletes state ──────────────────────────────
   const filtered = useMemo(() => {
-    const base = applyFilters(athletes, filters, search, performanceRanges);
-    if (!selectedStates.length) return base;
-    return base.filter(a => selectedStates.includes(getState(a.hometown)));
-  }, [athletes, filters, search, performanceRanges, selectedStates]);
+    const base = applyFilters(athletes, filters, search, performanceRanges, distFromSchool.school ? distFromSchool : null, transferOnly);
+    const stateFiltered = selectedStates.length > 0
+      ? base.filter(a => selectedStates.includes(getState(a.hometown)))
+      : base;
+    return stateFiltered;
+  }, [athletes, filters, search, performanceRanges, selectedStates, distFromSchool, transferOnly]);
+
+  // Gem scores for all athletes (memoized, expensive)
+  const gemScores = useMemo(() => {
+    const m = {};
+    athletes.forEach(a => { m[a.id] = computeGemScore(a, athletes); });
+    return m;
+  }, [athletes]);
   const overallAvg = useMemo(() => { const withCoords=filtered.filter(a=>a.hometownCoords&&a.collegeCoords); return withCoords.length ? Math.round(withCoords.reduce((s,a)=>s+haversine(a.hometownCoords,a.collegeCoords),0)/withCoords.length) : 0; }, [filtered]);
-  const hasFilters = filters.events.length>0||filters.conference||filters.college||filters.hsYear||filters.collegeYear||search||filters.season!=="all"||selectedStates.length>0;
+  const hasFilters = filters.events.length>0||filters.conference||filters.college||filters.hsYear||filters.collegeYear||search||filters.season!=="all"||selectedStates.length>0||distFromSchool.school||transferOnly;
 
   const handleAthleteClick = a => { setSelectedAthlete(s=>s?.id===a.id?null:a); setRightTab("athlete"); };
   const handleFocusCollege = c => { setFocusedCollege(c); if (c) setFocusedHometown(""); };
@@ -1689,6 +1939,14 @@ export default function App() {
             ))}
           </div>
 
+          <button
+            onClick={() => exportCSV(filtered, filters.events)}
+            title="Export filtered athletes to CSV"
+            style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:7,padding:"5px 14px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,letterSpacing:1,color:T.muted,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:6}}
+          >
+            <span style={{fontSize:14}}>↓</span> CSV
+          </button>
+
           <div style={{background:T.orangeGlow,border:`1px solid ${T.orange}44`,borderRadius:7,padding:"5px 14px",textAlign:"center"}}>
             <div style={{color:T.muted,fontSize:10,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase"}}>Avg Distance</div>
             <div style={{color:T.orange,fontSize:20,fontWeight:900,fontFamily:"'Barlow Condensed',sans-serif"}}>{overallAvg.toLocaleString()} mi</div>
@@ -1716,7 +1974,7 @@ export default function App() {
             {!leftCollapsed && (
               <div style={{flex:1,overflowY:"auto",padding:"10px 11px"}}>
                 <div style={{display:"flex",justifyContent:"flex-end",marginBottom:6}}>
-                  {hasFilters && <button onClick={()=>{setFilters({...BLANK_FILTERS});setSearch("");setSelectedStates([]);}} style={{background:"none",border:"none",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CLEAR</button>}
+                  {hasFilters && <button onClick={()=>{setFilters({...BLANK_FILTERS});setSearch("");setSelectedStates([]);setDistFromSchool({school:"",maxMiles:300});setTransferOnly(false);}} style={{background:"none",border:"none",color:T.red,fontSize:10,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>CLEAR</button>}
                 </div>
 
                 <FilterControls
@@ -1733,6 +1991,53 @@ export default function App() {
                   onRangeChange={handleRangeChange}
                 />
 
+                {/* ── Distance from School filter ── */}
+                <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:4}}>
+                  <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>Proximity to School</div>
+                  <Sel
+                    value={distFromSchool.school}
+                    onChange={v => setDistFromSchool(d => ({...d, school:v}))}
+                    options={Object.keys(COLLEGE_COORDS).sort().map(s => ({value:s,label:s}))}
+                    placeholder="Select a school..."
+                  />
+                  {distFromSchool.school && (
+                    <div style={{marginTop:7}}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                        <span style={{color:T.dim,fontSize:9,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>WITHIN</span>
+                        <span style={{color:T.orange,fontSize:11,fontFamily:"monospace",fontWeight:700}}>{distFromSchool.maxMiles} mi</span>
+                      </div>
+                      <input type="range" min={50} max={2000} step={50}
+                        value={distFromSchool.maxMiles}
+                        onChange={e => setDistFromSchool(d => ({...d, maxMiles:parseInt(e.target.value)}))}
+                        style={{width:"100%",accentColor:T.orange}}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Transfer Only + Gem Sort toggles ── */}
+                <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:7}}>
+                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                    <div onClick={()=>setTransferOnly(v=>!v)}
+                      style={{width:28,height:16,borderRadius:8,background:transferOnly?"#7C3AED":T.border,position:"relative",cursor:"pointer",transition:"background 0.15s",flexShrink:0}}>
+                      <div style={{position:"absolute",top:2,left:transferOnly?14:2,width:12,height:12,borderRadius:"50%",background:"#fff",transition:"left 0.15s"}}/>
+                    </div>
+                    <span style={{color:T.offWhite,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                      Transfer Portal Only
+                      <span style={{marginLeft:5,fontSize:8,background:"#7C3AED",color:"#fff",borderRadius:3,padding:"1px 4px"}}>TRF</span>
+                    </span>
+                  </label>
+                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}}>
+                    <div onClick={()=>setGemSort(v=>!v)}
+                      style={{width:28,height:16,borderRadius:8,background:gemSort?"#F59E0B":T.border,position:"relative",cursor:"pointer",transition:"background 0.15s",flexShrink:0}}>
+                      <div style={{position:"absolute",top:2,left:gemSort?14:2,width:12,height:12,borderRadius:"50%",background:"#fff",transition:"left 0.15s"}}/>
+                    </div>
+                    <span style={{color:T.offWhite,fontSize:11,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1}}>
+                      Sort by Hidden Gem 💎
+                    </span>
+                  </label>
+                </div>
+
                 <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,marginTop:4}}>
                   <div style={{color:T.dim,fontSize:9,letterSpacing:2,fontFamily:"'Barlow Condensed',sans-serif",textTransform:"uppercase",marginBottom:6}}>
                     Athletes ({filtered.length})
@@ -1742,19 +2047,43 @@ export default function App() {
                   {!loading && !error && filtered.length===0 && (
                     <div style={{color:T.dim,fontSize:11,textAlign:"center",padding:"20px 0"}}>No athletes match filters</div>
                   )}
-                  {filtered.slice(0,80).map(a=>{
-                    const d=a.hometownCoords?Math.round(haversine(a.hometownCoords,a.collegeCoords)):null;
-                    const isSel=selectedAthlete?.id===a.id;
-                    return (
-                      <button key={a.id} onClick={()=>handleAthleteClick(a)} style={{display:"block",width:"100%",textAlign:"left",background:isSel?T.orangeGlow:"rgba(255,255,255,0.02)",border:`1px solid ${isSel?T.orange:T.border}`,borderRadius:5,padding:"5px 7px",marginBottom:2,cursor:"pointer",transition:"all 0.12s"}}>
-                        <div style={{color:isSel?T.orange:T.offWhite,fontSize:12,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif"}}>{a.name}</div>
-                        <div style={{display:"flex",justifyContent:"space-between",marginTop:1}}>
-                          <span style={{color:T.dim,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:110}}>{a.college}</span>
-                          <span style={{color:distColor(d),fontSize:10,fontFamily:"monospace"}}>{fmtDist(d)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                  {(() => {
+                    const displayList = gemSort
+                      ? [...filtered].sort((a,b) => (gemScores[b.id]||0) - (gemScores[a.id]||0))
+                      : filtered;
+                    return displayList.slice(0,80).map(a => {
+                      const d = a.hometownCoords ? Math.round(haversine(a.hometownCoords, a.collegeCoords)) : null;
+                      const isSel = selectedAthlete?.id === a.id;
+                      const isWatched = watchlist.includes(a.id);
+                      const gem = gemScores[a.id] || 0;
+                      const activeEv = filters.events[0];
+                      const bestMark = activeEv && a.collegeTimes[activeEv];
+                      return (
+                        <button key={a.id} onClick={()=>handleAthleteClick(a)}
+                          style={{display:"block",width:"100%",textAlign:"left",background:isSel?T.orangeGlow:"rgba(255,255,255,0.02)",border:`1px solid ${isSel?T.orange:T.border}`,borderRadius:5,padding:"5px 7px",marginBottom:2,cursor:"pointer",transition:"all 0.12s"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:5,flex:1,overflow:"hidden"}}>
+                              <span style={{color:isSel?T.orange:T.offWhite,fontSize:12,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</span>
+                              {a.isTransfer && <span style={{fontSize:7,background:"#7C3AED",color:"#fff",borderRadius:3,padding:"1px 4px",flexShrink:0}}>TRF</span>}
+                              {isWatched && <span style={{fontSize:9,flexShrink:0}}>⭐</span>}
+                            </div>
+                            {bestMark
+                              ? <span style={{color:T.orange,fontSize:11,fontFamily:"monospace",fontWeight:800,flexShrink:0,marginLeft:4}}>{fmtTime(bestMark)}</span>
+                              : <span style={{color:distColor(d),fontSize:10,fontFamily:"monospace",flexShrink:0,marginLeft:4}}>{fmtDist(d)}</span>
+                            }
+                          </div>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:1}}>
+                            <span style={{color:T.dim,fontSize:10,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:110}}>{a.college}</span>
+                            {gemSort && gem > 0 && (
+                              <span style={{fontSize:9,color:gem>=80?"#F59E0B":gem>=60?"#10B981":T.dim,fontWeight:gem>=60?700:400}}>
+                                💎{gem}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    });
+                  })()}
                   {filtered.length>80 && <div style={{color:T.dim,fontSize:10,textAlign:"center",marginTop:6}}>+{filtered.length-80} more — use filters</div>}
                 </div>
               </div>
@@ -1815,13 +2144,14 @@ export default function App() {
               <button onClick={()=>setRightCollapsed(v=>!v)} title={rightCollapsed?"Expand panel":"Collapse panel"} style={{background:"none",border:"none",borderRight:`1px solid ${T.border}`,color:T.grayM,fontSize:11,cursor:"pointer",padding:"10px 10px",lineHeight:1,flexShrink:0}}>
                 {rightCollapsed?"‹":"›"}
               </button>
-              {!rightCollapsed && [["athlete","Athlete"],["college","Pull"],["hometown","Origin"],["heatmap","Heat"]].map(([tab,label])=>(
+              {!rightCollapsed && [["athlete","Athlete"],["watch",`Watch${watchlist.length>0?` (${watchlist.length})`:""}`],["college","Pull"],["hometown","Origin"],["heatmap","Heat"]].map(([tab,label])=>(
                 <button key={tab} onClick={()=>switchRightTab(tab)} style={{flex:1,padding:"10px 3px",background:rightTab===tab?T.orangeGlow:"transparent",border:"none",borderBottom:rightTab===tab?`2px solid ${T.orange}`:"2px solid transparent",color:rightTab===tab?T.orange:T.muted,fontSize:11,cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,textTransform:"uppercase",transition:"all 0.12s",fontWeight:rightTab===tab?700:400}}>{label}</button>
               ))}
             </div>
             {!rightCollapsed && (
               <div style={{flex:1,overflowY:"auto"}}>
-                {rightTab==="athlete"  && <AthleteDetail athlete={selectedAthlete} onClose={()=>setSelectedAthlete(null)} allAthletes={athletes}/>}
+                {rightTab==="athlete"  && <AthleteDetail athlete={selectedAthlete} onClose={()=>setSelectedAthlete(null)} allAthletes={athletes} isWatched={watchlist.includes(selectedAthlete?.id)} onToggleWatch={toggleWatch} gemScore={selectedAthlete ? gemScores[selectedAthlete.id] : 0} note={selectedAthlete ? (notes[selectedAthlete.id]||"") : ""} onNoteChange={handleNoteChange}/>}
+                {rightTab==="watch"    && <WatchlistPanel watchlist={watchlist} athletes={athletes} notes={notes} onNoteChange={handleNoteChange} onRemove={id=>setWatchlist(w=>w.filter(x=>x!==id))} onSelectAthlete={a=>{setSelectedAthlete(a);setRightTab("athlete");}} activeEvents={filters.events}/>}
                 {rightTab==="college"  && <CollegePullPanel athletes={filtered} focusedCollege={focusedCollege} onFocusCollege={handleFocusCollege}/>}
                 {rightTab==="hometown" && <HometownPanel athletes={filtered} focusedHometown={focusedHometown} onFocusHometown={handleFocusHometown}/>}
                 {rightTab==="heatmap"  && <HeatmapPanel athletes={filtered}/>}
