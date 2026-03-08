@@ -10,6 +10,7 @@ are skipped automatically, so the workflow is safe to re-run at any time.
 import argparse
 import logging
 import os
+import re
 import time
 
 import requests
@@ -45,6 +46,114 @@ STATE_NAMES = {
     "WV":"West Virginia","WI":"Wisconsin","WY":"Wyoming","DC":"Washington DC",
 }
 
+# ── Hometown cleaning ──────────────────────────────────────────────────────────
+
+# Known typos: raw value → corrected city string
+_TYPO_CORRECTIONS = {
+    "Ankney, IA":               "Ankeny, IA",
+    "Burlingtown Township, NJ": "Burlington Township, NJ",
+    "Charoltte, NC":            "Charlotte, NC",
+    "Claredon Hills, IL":       "Clarendon Hills, IL",
+    "Couer D'Alene, ID":        "Coeur d'Alene, ID",
+    "Couer d'Alene, ID":        "Coeur d'Alene, ID",
+    "Cuningham, NC":            "Cunningham, NC",
+    "East Manchester, CT":      "Manchester, CT",
+    "Exter, NH":                "Exeter, NH",
+    "Fort Lauderale, FL":       "Fort Lauderdale, FL",
+    "Frankort, IL":             "Frankfort, IL",
+    "Golden Brdge, NY":         "Golden Bridge, NY",
+    "Harleyville, PA":          "Harleysville, PA",
+    "Hillboro, OR":             "Hillsboro, OR",
+    "Kalamzoo, MI":             "Kalamazoo, MI",
+    "Laguna Nigel, CA":         "Laguna Niguel, CA",
+    "Lake Owsego, OR":          "Lake Oswego, OR",
+    "Lambertsville, NJ":        "Lambertville, NJ",
+    "Milwakee, WI":             "Milwaukee, WI",
+    "Nine Miles Falls, WA":     "Nine Mile Falls, WA",
+    "Riatlo, CA":               "Rialto, CA",
+    "South Winsor, CT":         "South Windsor, CT",
+    "Spencerport, PA":          "Spencerport, NY",
+    "Timnath, OR":              "Timnath, CO",
+    "Warenton, VA":             "Warrenton, VA",
+    "Warner Robbins, GA":       "Warner Robins, GA",
+}
+
+# Academic / program / class-year words that are NOT part of a US city name.
+# Used to detect and strip leading garbage from athlete hometown strings.
+_ACADEMIC_TERMS = {
+    "administration", "bioengineering", "baylor", "collegiate",
+    "developmental", "development", "disorders", "ecosystem", "education",
+    "elementary", "engineering", "english", "entrepreneurship", "exercise",
+    "experience", "first-year", "fresh", "freshman", "health", "healthcare",
+    "hpe", "human", "interdisciplinary", "management", "marketing", "mba",
+    "mechanical", "medicine", "politics", "practice", "pre-nursing",
+    "psychology", "relations", "science", "secondary", "social",
+    "studies", "studies-public", "undeclared", "work",
+}
+
+
+def clean_hometown(raw: str) -> str:
+    """
+    Normalise a raw hometown string before passing it to Nominatim.
+
+    Handles two classes of bad data found in athlete records:
+
+    1. Typos — direct lookup in _TYPO_CORRECTIONS.
+       e.g. "Charoltte, NC"  →  "Charlotte, NC"
+
+    2. Academic / major / class-year prefix prepended to the real city.
+       e.g. "Exercise Science Arlington, WA"  →  "Arlington, WA"
+            "Bioengineering Ellicott City, MD" →  "Ellicott City, MD"
+            "First-Year Chicago, IL"           →  "Chicago, IL"
+            "Baylor\\nBearsCollegiate\\nWaco, TX" →  "Waco, TX"
+
+    Returns the original string unchanged if neither pattern is detected,
+    so well-formed values like "Seattle, WA" pass through without modification.
+    """
+    if not raw or not isinstance(raw, str):
+        return raw
+
+    value = raw.strip()
+
+    # Step 1: direct typo fix
+    if value in _TYPO_CORRECTIONS:
+        return _TYPO_CORRECTIONS[value]
+
+    # Step 2: flatten embedded newlines
+    # e.g. "Baylor\nBearsCollegiate\nWaco, TX" → "Baylor BearsCollegiate Waco, TX"
+    flat = " ".join(value.splitlines()).strip()
+
+    # Step 3: confirm string ends with ", ST"
+    m = re.search(r',\s*([A-Z]{2})\s*$', flat)
+    if not m:
+        return value  # no recognisable state code — leave as-is
+
+    state = m.group(1)
+    words = flat[:m.start()].strip().split()
+
+    # Step 4: for 3+ words before the comma, scan for the last academic term
+    # and strip everything up to and including it.
+    # Substring match (not just exact) catches run-together tokens like
+    # "BearsCollegiate" which contains "collegiate".
+    if len(words) >= 3:
+        last_bad = -1
+        for i, word in enumerate(words):
+            if any(term in word.lower() for term in _ACADEMIC_TERMS):
+                last_bad = i
+        if 0 <= last_bad < len(words) - 1:
+            return f"{' '.join(words[last_bad + 1:])}, {state}"
+
+    # Step 5: for 2-word strings, use exact match on the first word to
+    # reduce false-positive risk on legitimate 2-word city names.
+    if len(words) >= 2:
+        first = words[0].lower()
+        if first in _ACADEMIC_TERMS or any(term in first for term in _ACADEMIC_TERMS):
+            return f"{' '.join(words[1:])}, {state}"
+
+    return value
+
+
+# ── Geocoding ──────────────────────────────────────────────────────────────────
 
 def geocode(city: str, state_abbr: str) -> tuple[float, float] | None:
     state_full = STATE_NAMES.get(state_abbr, state_abbr)
@@ -98,21 +207,33 @@ def main():
     all_athletes = fetch_all_athletes(supabase)
     log.info(f"  {len(all_athletes)} athletes with hometowns")
 
-    # Split into already-resolved vs still-needing-coords
+    # Split into already-resolved vs still-needing-coords.
+    # Use the *cleaned* hometown as the dedup key so that e.g.
+    # "Exercise Science Arlington, WA" and "Arlington, WA" share a cache entry.
     resolved: set[str] = set()
     unresolved_athletes: list[dict] = []
     for a in all_athletes:
         ht = (a.get("hometown") or "").strip()
-        if not ht or ", " not in ht:
+        if not ht:
+            continue
+        cleaned = clean_hometown(ht)
+        if ", " not in cleaned:
             continue
         if a.get("hometown_lat") is not None:
-            resolved.add(ht)
+            resolved.add(cleaned)
         else:
             unresolved_athletes.append(a)
 
-    # Unique cities that need geocoding (skip cities already resolved on other athletes)
+    # Map raw → cleaned so the DB-update loop can key on the raw value.
+    raw_to_clean: dict[str, str] = {
+        a["hometown"].strip(): clean_hometown(a["hometown"].strip())
+        for a in unresolved_athletes
+    }
+
+    # Unique cities that still need geocoding
     cities_to_geocode = sorted(
-        {a["hometown"].strip() for a in unresolved_athletes} - resolved
+        {raw for raw, cleaned in raw_to_clean.items()
+         if cleaned not in resolved}
     )
     if args.limit:
         cities_to_geocode = cities_to_geocode[: args.limit]
@@ -121,19 +242,23 @@ def main():
     log.info(f"  {len(cities_to_geocode)} cities to geocode now")
 
     # ── Geocode ────────────────────────────────────────────────────────────────
-    coords_map: dict[str, tuple[float, float]] = {}
+    coords_map: dict[str, tuple[float, float]] = {}   # keyed by RAW hometown
     failed: list[str] = []
 
-    for i, hometown in enumerate(cities_to_geocode, 1):
-        city, state = hometown.rsplit(", ", 1)
+    for i, raw_hometown in enumerate(cities_to_geocode, 1):
+        cleaned = raw_to_clean[raw_hometown]
+        if cleaned != raw_hometown:
+            log.info(f"  [{i}/{len(cities_to_geocode)}] Cleaned: '{raw_hometown}' → '{cleaned}'")
+
+        city, state = cleaned.rsplit(", ", 1)
         result = geocode(city, state)
         if result:
-            coords_map[hometown] = result
-            log.info(f"  [{i}/{len(cities_to_geocode)}] {hometown} → "
+            coords_map[raw_hometown] = result
+            log.info(f"  [{i}/{len(cities_to_geocode)}] {cleaned} → "
                      f"{result[0]:.4f}, {result[1]:.4f}")
         else:
-            failed.append(hometown)
-            log.warning(f"  [{i}/{len(cities_to_geocode)}] {hometown} → NOT FOUND")
+            failed.append(raw_hometown)
+            log.warning(f"  [{i}/{len(cities_to_geocode)}] {cleaned} → NOT FOUND")
         time.sleep(NOMINATIM_DELAY)
 
     # ── Write coords to DB ─────────────────────────────────────────────────────
