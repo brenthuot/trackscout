@@ -19,6 +19,7 @@ export default async function handler(req, res) {
         hometown, hometown_state, hometown_lat, hometown_lng, high_school,
         hs_grad_year, college, conference,
         college_year, gender, events, tfrrs_url,
+        is_transfer, transfer_from, transfer_year,
         performances (
           athlete_id, event, mark, mark_display,
           year, season, level, meet_name
