@@ -620,28 +620,38 @@ def load_schools(supabase: Client) -> list[dict]:
 
 
 def load_existing_ids(supabase: Client) -> set[str]:
-    """Load all existing TFRRS source_ids to skip athletes already in the DB."""
+    """
+    Load all existing TFRRS athlete identifiers to skip athletes already in DB.
+    Checks both 'id' and 'source_id' — older records have id=tfrrs_XXXX but
+    source_id NULL; newer records have both set.
+    """
     result = (
         supabase.table("athletes")
-        .select("source_id")
+        .select("id, source_id")
         .eq("source", "tfrrs")
         .execute()
     )
-    ids = {row["source_id"] for row in (result.data or []) if row.get("source_id")}
+    ids: set[str] = set()
+    for row in (result.data or []):
+        if row.get("id"):
+            ids.add(str(row["id"]))
+        if row.get("source_id"):
+            ids.add(str(row["source_id"]))
     log.info(f"  {len(ids)} athletes already in DB")
     return ids
 
 
-def insert_athlete(supabase: Client, payload: dict, dry_run: bool) -> Optional[int]:
+def insert_athlete(supabase: Client, payload: dict, dry_run: bool) -> Optional[str]:
     if dry_run:
         log.info(
             f"  [DRY RUN] INSERT athlete: {payload['name']} | "
             f"{payload['college']} | grad_year={payload.get('grad_year')} | "
-            f"source_id={payload['source_id']}"
+            f"id={payload['id']}"
         )
         return None
     try:
-        res = supabase.table("athletes").insert(payload).execute()
+        # upsert with ignore_duplicates=True -> ON CONFLICT DO NOTHING
+        res = supabase.table("athletes").upsert(payload, ignore_duplicates=True).execute()
         if res.data:
             return res.data[0]["id"]
     except Exception as e:
