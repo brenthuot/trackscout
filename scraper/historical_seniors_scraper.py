@@ -720,18 +720,18 @@ def process_athlete(
         f"({info['num_seasons']} seasons)"
     )
 
-payload = {
-        "name":        name,
-        "source":      "tfrrs",
-        "source_id":   source_id,
-        "tfrrs_url":   url,
-        "college":     school["college"],
-        "conference":  school["conference"],
+    payload = {
+        "name":         name,
+        "source":       "tfrrs",
+        "source_id":    source_id,
+        "tfrrs_url":    url,
+        "college":      school["college"],
+        "conference":   school["conference"],
         "hs_grad_year": hs_grad_year,
-        "grad_year":   grad_year,
-        "gender":      gender,
-        "events":      events or None,
-        "is_transfer": None,
+        "grad_year":    grad_year,
+        "gender":       gender,
+        "events":       events or None,
+        "is_transfer":  None,
     }
 
     new_id = insert_athlete(supabase, payload, dry_run)
