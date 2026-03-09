@@ -721,6 +721,7 @@ def process_athlete(
     )
 
     payload = {
+        "id":           source_id,
         "name":         name,
         "source":       "tfrrs",
         "source_id":    source_id,
