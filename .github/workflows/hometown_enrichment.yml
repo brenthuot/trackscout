@@ -1,0 +1,78 @@
+name: Hometown Enrichment
+
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "Which step to run (both / step1 / step2)"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - both
+          - step1
+          - step2
+      limit:
+        description: "Max athletes to process per step (leave blank for all)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run (no DB writes)"
+        type: boolean
+        required: false
+        default: false
+      skip_geocode:
+        description: "Skip geocode backfill after enrichment"
+        type: boolean
+        required: false
+        default: false
+
+  schedule:
+    - cron: "0 7 * * 2"   # every Tuesday at 7am UTC (day after TFRRS weekly scrape)
+
+jobs:
+  enrich:
+    name: Fill missing hometowns
+    runs-on: ubuntu-latest
+    timeout-minutes: 180   # TFRRS pass: ~1 req/s × n athletes; roster pass: ~1.5s × 120 pages
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 supabase python-dotenv
+
+      - name: Run hometown enrichment
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          ARGS=""
+
+          # Step selection
+          STEP="${{ github.event.inputs.step }}"
+          if [ "$STEP" = "step1" ]; then ARGS="$ARGS --step1-only"; fi
+          if [ "$STEP" = "step2" ]; then ARGS="$ARGS --step2-only"; fi
+
+          # Optional limit
+          if [ -n "${{ github.event.inputs.limit }}" ]; then
+            ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"
+          fi
+
+          # Dry run
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+
+          # Skip geocode
+          if [ "${{ github.event.inputs.skip_geocode }}" = "true" ]; then
+            ARGS="$ARGS --skip-geocode"
+          fi
+
+          python scraper/hometown_enrichment.py $ARGS
