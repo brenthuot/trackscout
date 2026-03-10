@@ -8,28 +8,27 @@ with their full performance histories.
 Architecture
 ────────────
 1. Pull distinct schools + a sample athlete URL per school from Supabase.
-2. From the sample athlete URL, follow the breadcrumb to the school's TFRRS
-   team page and scrape all athlete links.
-3. For each athlete not already in the DB, fetch their PRINT PAGE (?print=1).
-   The print page is flat HTML — season headings followed immediately by plain
-   tables — with no Bootstrap panels to navigate.
-4. Walk headings and tables in document order to parse season info and
-   performances in a single pass.
-5. If an athlete's most recent season matches a target graduation year, insert
-   them into Supabase with all their performances.
+2. From the sample athlete URL, resolve the school's TFRRS team BASE URL.
+3. For each target year, scrape the year-specific roster page:
+     {base_url}/{year}.html  →  every athlete on the team that year
+4. For each athlete on that year's roster, fetch their PRINT PAGE (?print=1)
+   and confirm their last active spring == target_year (i.e. they were a
+   senior / final-year athlete that spring).
+5. Insert new athletes with full performance history; update grad_year on
+   athletes already in the DB from the main TFRRS scraper.
 
-Parsing strategy (per design spec)
-────────────────────────────────────
-  Primary   : print page  (?print=1)  — flat heading → table pairs
-  Fallback  : standard page           — panel-first traversal (.panel containers)
-  Columns   : detected dynamically by header text, never by fixed index
-  Events    : all tables per season, including relays and multi-events
+TFRRS historical roster URL pattern
+─────────────────────────────────────
+  Current roster:  .../teams/tf/MT_college_f_Montana_State.html
+  2025 roster:     .../teams/tf/MT_college_f_Montana_State/2025.html
+  2024 roster:     .../teams/tf/MT_college_f_Montana_State/2024.html
+  2023 roster:     .../teams/tf/MT_college_f_Montana_State/2023.html
 
 Usage
 ─────
   python scraper/historical_seniors_scraper.py --dry-run
-  python scraper/historical_seniors_scraper.py --limit 20       # 20 schools
-  python scraper/historical_seniors_scraper.py                   # all schools
+  python scraper/historical_seniors_scraper.py --limit 5
+  python scraper/historical_seniors_scraper.py
   python scraper/historical_seniors_scraper.py --years 2024 2025
 """
 
@@ -57,7 +56,7 @@ log = logging.getLogger(__name__)
 # ── Config ────────────────────────────────────────────────────────────────────
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_KEY"]
 
 HEADERS = {
     "User-Agent": (
@@ -67,33 +66,22 @@ HEADERS = {
     )
 }
 
-REQUEST_DELAY  = 1.2   # seconds between TFRRS requests
-TFRRS_BASE     = "https://www.tfrrs.org"
+REQUEST_DELAY = 1.2
+TFRRS_BASE    = "https://www.tfrrs.org"
+YEAR_MIN      = 2015
+YEAR_MAX      = 2026
 
-# Schools whose athlete pages lack a team breadcrumb link.
-# Maps college name (as stored in DB) -> list of known team page URLs to try.
-TEAM_URL_OVERRIDES: dict[str, list[str]] = {
-    "BYU": [
-        "https://www.tfrrs.org/teams/tf/UT_college_m_BYU.html",
-        "https://www.tfrrs.org/teams/tf/UT_college_f_BYU.html",
-    ],
-}
-YEAR_MIN       = 2015
-YEAR_MAX       = 2026
-
-# Marks that indicate no performance — skip these rows
 BAD_MARKS = frozenset({
     "", "—", "–", "-", "DNF", "DNS", "DQ", "NH", "NM",
     "FOUL", "PASS", "SCR", "NT", "ND", "SCRATCH", "N/A",
 })
 
 # ── Event normalisation ───────────────────────────────────────────────────────
-# Keys are lowercase substrings; first match wins.
 
 EVENT_MAP = [
-    ("110 meter hurdle",  "110mH"),
-    ("100 meter hurdle",  "100mH"),
-    ("400 meter hurdle",  "400mH"),
+    ("110 meter hurdle",    "110mH"),
+    ("100 meter hurdle",    "100mH"),
+    ("400 meter hurdle",    "400mH"),
     ("3,000 meter steeple", "3000mSC"),
     ("3000 meter steeple",  "3000mSC"),
     ("steeplechase",        "3000mSC"),
@@ -119,18 +107,18 @@ EVENT_MAP = [
     ("400",      "400m"),
     ("200",      "200m"),
     ("100",      "100m"),
-    ("high jump",   "HJ"),
-    ("pole vault",  "PV"),
-    ("long jump",   "LJ"),
-    ("triple jump", "TJ"),
-    ("shot put",    "SP"),
-    ("discus",      "DT"),
-    ("hammer",      "HT"),
-    ("javelin",     "JT"),
+    ("high jump",    "HJ"),
+    ("pole vault",   "PV"),
+    ("long jump",    "LJ"),
+    ("triple jump",  "TJ"),
+    ("shot put",     "SP"),
+    ("discus",       "DT"),
+    ("hammer",       "HT"),
+    ("javelin",      "JT"),
     ("weight throw", "WT"),
-    ("heptathlon",  "Hept"),
-    ("decathlon",   "Dec"),
-    ("pentathlon",  "Pent"),
+    ("heptathlon",   "Hept"),
+    ("decathlon",    "Dec"),
+    ("pentathlon",   "Pent"),
 ]
 
 
@@ -145,69 +133,39 @@ def normalize_event(raw: str) -> str:
 # ── Mark conversion ───────────────────────────────────────────────────────────
 
 def mark_to_float(s: str) -> Optional[float]:
-    """
-    Convert a mark string to a sortable float.
-    Track events → total seconds.   Field events → metres.
-    Returns None if unparseable.
-    """
     s = s.strip().upper().replace(",", "")
-    # Strip trailing unit (M, m)
     s = re.sub(r"\s*M$", "", s).strip()
-
-    # M:SS.ss  or  H:MM:SS(.ss)
     m = re.match(r"^(\d+):(\d{2})\.(\d+)$", s)
     if m:
         return int(m.group(1)) * 60 + int(m.group(2)) + float("0." + m.group(3))
-
     m = re.match(r"^(\d+):(\d{2}):(\d{2})\.?(\d*)$", s)
     if m:
         return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
-
-    # Decimal seconds or metres: 10.23, 7.85, 21.34
     m = re.match(r"^(\d{1,4})\.(\d{2,4})$", s)
     if m:
         return float(s)
-
-    # Imperial field: 25-08.50  or  6-05
     m = re.match(r"^(\d{1,2})-(\d{2}\.?\d*)$", s)
     if m:
-        feet   = int(m.group(1))
-        inches = float(m.group(2))
-        return round((feet * 12 + inches) * 0.0254, 3)
-
+        return round((int(m.group(1)) * 12 + float(m.group(2))) * 0.0254, 3)
     return None
 
 
 # ── Season heading parsing ────────────────────────────────────────────────────
 
 def parse_spring_year(text: str) -> Optional[int]:
-    """
-    Extract the 'spring year' from a TFRRS season heading.
-
-    "2022-23 — Oregon"    → 2023   (academic-year format)
-    "2024 Outdoor — OSU"  → 2024
-    "2023 Indoor"         → 2023
-    """
     text = text.strip()
-
-    # Academic year "YYYY-YY"
     m = re.match(r"(\d{4})-(\d{2})\b", text)
     if m:
         yr = int(m.group(1)) + 1
         return yr if YEAR_MIN <= yr <= YEAR_MAX else None
-
-    # Bare year + season keyword
     m = re.match(r"(\d{4})\s+(outdoor|indoor|cross|xc|track|field)", text, re.I)
     if m:
         yr = int(m.group(1))
         return yr if YEAR_MIN <= yr <= YEAR_MAX else None
-
-    # Bare four-digit year at start
     m = re.match(r"(\d{4})\b", text)
     if m:
         yr = int(m.group(1))
         return yr if YEAR_MIN <= yr <= YEAR_MAX else None
-
     return None
 
 
@@ -233,23 +191,13 @@ def fetch(url: str) -> Optional[BeautifulSoup]:
 
 
 def print_url(athlete_url: str) -> str:
-    """Return the print-page URL for a TFRRS athlete page."""
     return athlete_url.split("?")[0] + "?print=1"
 
 
 # ── Column detection ──────────────────────────────────────────────────────────
 
-def detect_columns(header_cells: list[Tag]) -> dict[str, Optional[int]]:
-    """
-    Build a mapping of logical column name → index from a list of <th>/<td> cells.
-
-    Logical names: event, mark, meet, date, place
-    Matching is by substring so "Result", "Time", "Mark" all resolve to "mark".
-    """
-    cols: dict[str, Optional[int]] = {
-        "event": None, "mark": None, "meet": None, "date": None, "place": None
-    }
-
+def detect_columns(header_cells: list) -> dict:
+    cols: dict = {"event": None, "mark": None, "meet": None, "date": None, "place": None}
     for i, cell in enumerate(header_cells):
         h = cell.get_text(strip=True).lower()
         if cols["event"] is None and any(x in h for x in ("event", "discipline")):
@@ -262,38 +210,18 @@ def detect_columns(header_cells: list[Tag]) -> dict[str, Optional[int]]:
             cols["date"] = i
         if cols["place"] is None and any(x in h for x in ("place", " pl", "pos")):
             cols["place"] = i
-
-    # Positional fallbacks — TFRRS print layout: Event(0) Mark(1) Wind(2) Meet(3) Date(4) Place(5)
     if cols["event"] is None:
         cols["event"] = 0
     if cols["mark"] is None:
         cols["mark"] = 1
     if cols["meet"] is None and len(header_cells) > 3:
         cols["meet"] = 3
-
     return cols
 
 
 # ── Table parser ──────────────────────────────────────────────────────────────
 
-def parse_table(
-    table: Tag,
-    spring_year: int,
-    stype: str,
-    athlete_id: int,
-) -> list[dict]:
-    """
-    Parse one TFRRS performance table into a list of performance dicts.
-
-    Handles:
-    - standard individual events
-    - relay events (4x100, 4x400, etc.)
-    - multi-events (decathlon, heptathlon)
-    - tables with no <thead> (first <tr> treated as header)
-
-    Column positions are detected dynamically; fixed indexes are never used.
-    """
-    # ── Locate header cells ───────────────────────────────────────────────────
+def parse_table(table: Tag, spring_year: int, stype: str, athlete_id: int) -> list:
     header_cells = table.select("thead th, thead td")
     if not header_cells:
         first_tr = table.find("tr")
@@ -301,53 +229,47 @@ def parse_table(
             return []
         header_cells = first_tr.find_all(["th", "td"])
 
-    cols = detect_columns(header_cells)
+    cols      = detect_columns(header_cells)
     event_col = cols["event"]
     mark_col  = cols["mark"]
     meet_col  = cols["meet"]
 
-    # ── Parse data rows ───────────────────────────────────────────────────────
     data_rows = table.select("tbody tr")
     if not data_rows:
-        # No <tbody>: all rows minus the first (header)
-        all_rows = table.find_all("tr")
+        all_rows  = table.find_all("tr")
         data_rows = all_rows[1:] if len(all_rows) > 1 else []
 
     results = []
-    seen: set[tuple] = set()
+    seen: set = set()
 
     for tr in data_rows:
         cells = tr.find_all(["td", "th"])
         if not cells:
             continue
-        # Skip accidental header rows in tbody
         if all(c.name == "th" for c in cells):
             continue
 
-        def cell(idx: Optional[int]) -> str:
+        def cell(idx) -> str:
             if idx is None or idx >= len(cells):
                 return ""
             return cells[idx].get_text(strip=True)
 
         event_raw = cell(event_col)
         mark_raw  = cell(mark_col)
-
         if not event_raw or not mark_raw:
             continue
         if mark_raw.upper() in BAD_MARKS:
             continue
         if not re.search(r"[\d.:]", mark_raw):
-            continue  # no numeric content — sub-header or empty row
+            continue
 
-        event = normalize_event(event_raw)
-
-        # Strip wind annotation: "10.45 (+1.2)", "7.23w", "10.45 (w1.2)"
+        event        = normalize_event(event_raw)
         mark_display = re.sub(r"\s*[\[(]?[wW][+\-]?\d*\.?\d*[\])]?", "", mark_raw)
         mark_display = mark_display.replace("*", "").strip()
         if not mark_display or mark_display.upper() in BAD_MARKS:
             continue
 
-        mark_val = mark_to_float(mark_display)
+        mark_val  = mark_to_float(mark_display)
         meet_name = cell(meet_col)
 
         dedup = (event, mark_display, spring_year, stype)
@@ -356,7 +278,7 @@ def parse_table(
         seen.add(dedup)
 
         results.append({
-            "athlete_id": athlete_id,
+            "athlete_id":   athlete_id,
             "event":        event,
             "mark":         mark_val,
             "mark_display": mark_display,
@@ -371,59 +293,29 @@ def parse_table(
 
 # ── Performance scraping ──────────────────────────────────────────────────────
 
-def scrape_print_page(print_soup: BeautifulSoup, athlete_id: int) -> tuple[list[dict], dict]:
-    """
-    Parse a TFRRS print page (?print=1) for season info and performances.
-
-    The print page is flat HTML. Season headings and tables appear as siblings
-    in document order with no wrapping panel divs:
-
-        <h3>2024-25 Outdoor — Ohio State</h3>
-        <table>...</table>      ← outdoor performances
-        <table>...</table>      ← relay / multi-event table for same season
-        <h3>2024-25 Indoor — Ohio State</h3>
-        <table>...</table>
-
-    We walk elements in order, updating the current season context whenever
-    we see a heading that contains a parseable year.
-
-    Returns
-    -------
-    performances : list of performance dicts (athlete_id=0 placeholder)
-    season_info  : {spring_years, last_spring, first_spring, num_seasons, gender}
-    """
-    spring_years: set[int] = set()
-    all_perfs: list[dict] = []
-    seen_global: set[tuple] = set()
-
+def scrape_print_page(print_soup: BeautifulSoup, athlete_id: int) -> tuple:
+    spring_years: set = set()
+    all_perfs:    list = []
+    seen_global:  set = set()
     cur_year:  Optional[int] = None
     cur_stype: str = "outdoor"
 
     for el in print_soup.find_all(["h2", "h3", "h4", "table"]):
-
-        # ── Heading → update season context ───────────────────────────────
         if el.name in ("h2", "h3", "h4"):
-            text = el.get_text(strip=True)
-            yr   = parse_spring_year(text)
+            yr = parse_spring_year(el.get_text(strip=True))
             if yr:
                 cur_year  = yr
-                cur_stype = season_type(text)
+                cur_stype = season_type(el.get_text(strip=True))
                 spring_years.add(yr)
             continue
-
-        # ── Table → parse all rows under current season context ───────────
-        # Per spec: parse ALL tables per season (individual + relays + multi-events)
         if cur_year is None:
             continue
-
-        rows = parse_table(el, cur_year, cur_stype, athlete_id)
-        for row in rows:
+        for row in parse_table(el, cur_year, cur_stype, athlete_id):
             key = (row["event"], row["mark_display"], row["year"], row["season"])
             if key not in seen_global:
                 seen_global.add(key)
                 all_perfs.append(row)
 
-    # ── Gender from page text ──────────────────────────────────────────────
     gender = None
     early  = print_soup.get_text()[:800].lower()
     if "women" in early or "female" in early:
@@ -432,7 +324,7 @@ def scrape_print_page(print_soup: BeautifulSoup, athlete_id: int) -> tuple[list[
         gender = "M"
 
     spring_list = sorted(spring_years)
-    season_info = {
+    return all_perfs, {
         "spring_years": spring_list,
         "last_spring":  spring_list[-1] if spring_list else None,
         "first_spring": spring_list[0]  if spring_list else None,
@@ -440,54 +332,31 @@ def scrape_print_page(print_soup: BeautifulSoup, athlete_id: int) -> tuple[list[
         "gender":       gender,
     }
 
-    log.debug(f"  print page: {len(spring_list)} seasons, {len(all_perfs)} performances")
-    return all_perfs, season_info
 
+def scrape_panel_page(soup: BeautifulSoup, athlete_id: int) -> tuple:
+    spring_years: set = set()
+    all_perfs:    list = []
+    seen_global:  set = set()
 
-def scrape_panel_page(soup: BeautifulSoup, athlete_id: int) -> tuple[list[dict], dict]:
-    """
-    Fallback parser for the standard TFRRS athlete page (Bootstrap panels).
-
-    Never traverses backward from tables. Instead, selects .panel containers
-    directly and reads their heading + tables as a unit.
-
-    Per spec: iterates panel.select("table") to capture all tables per season
-    (individual events, relays, multi-events may be in separate tables).
-    """
-    spring_years: set[int] = set()
-    all_perfs:    list[dict] = []
-    seen_global:  set[tuple] = set()
-
-    # Select all panel containers
-    panels = soup.select("div.panel, div.card")
-
-    for panel in panels:
-        # Read heading from the panel itself — never traverse across panels
+    for panel in soup.select("div.panel, div.card"):
         title_el = panel.select_one(
             ".panel-title, .panel-heading h3, .panel-heading h4, "
             ".panel-heading h5, .card-header h3, .card-header h4"
         )
         if not title_el:
             continue
-
-        heading_text = title_el.get_text(strip=True)
-        yr = parse_spring_year(heading_text)
+        yr = parse_spring_year(title_el.get_text(strip=True))
         if not yr:
             continue
-
         spring_years.add(yr)
-        stype = season_type(heading_text)
-
-        # Parse ALL tables within this panel (individual + relays + multi-events)
+        stype = season_type(title_el.get_text(strip=True))
         for table in panel.select("table"):
-            rows = parse_table(table, yr, stype, athlete_id)
-            for row in rows:
+            for row in parse_table(table, yr, stype, athlete_id):
                 key = (row["event"], row["mark_display"], row["year"], row["season"])
                 if key not in seen_global:
                     seen_global.add(key)
                     all_perfs.append(row)
 
-    # Gender
     gender = None
     early  = soup.get_text()[:800].lower()
     if "women" in early or "female" in early:
@@ -496,7 +365,7 @@ def scrape_panel_page(soup: BeautifulSoup, athlete_id: int) -> tuple[list[dict],
         gender = "M"
 
     spring_list = sorted(spring_years)
-    season_info = {
+    return all_perfs, {
         "spring_years": spring_list,
         "last_spring":  spring_list[-1] if spring_list else None,
         "first_spring": spring_list[0]  if spring_list else None,
@@ -504,98 +373,70 @@ def scrape_panel_page(soup: BeautifulSoup, athlete_id: int) -> tuple[list[dict],
         "gender":       gender,
     }
 
-    log.debug(f"  panel page: {len(spring_list)} seasons, {len(all_perfs)} performances")
-    return all_perfs, season_info
 
-
-def scrape_athlete(url: str, athlete_id: int = 0) -> tuple[list[dict], dict]:
-    """
-    Fetch and parse an athlete page.
-
-    Tries the print page first (?print=1). If the print page yields no season
-    data (e.g. TFRRS returns the same panel layout), falls back to panel-first
-    parsing of the standard page.
-    """
-    # Primary: print page
-    purl = print_url(url)
-    soup = fetch(purl)
+def scrape_athlete(url: str, athlete_id: int = 0) -> tuple:
+    soup = fetch(print_url(url))
     if soup:
         perfs, info = scrape_print_page(soup, athlete_id)
         if info["num_seasons"] > 0:
             return perfs, info
-        log.debug(f"  Print page yielded no seasons for {url}, trying standard page")
-
-    # Fallback: standard page with panel-first parsing
     soup = fetch(url)
     if soup:
         return scrape_panel_page(soup, athlete_id)
-
     return [], {"spring_years": [], "last_spring": None,
                 "first_spring": None, "num_seasons": 0, "gender": None}
 
 
-# ── Team page scraping ────────────────────────────────────────────────────────
+# ── Team URL helpers ──────────────────────────────────────────────────────────
 
 def find_team_url(athlete_soup: BeautifulSoup) -> Optional[str]:
-    """
-    Extract the school's TFRRS team page URL from an athlete page.
-    Breadcrumb links are the most reliable signal.
-    """
     for link in athlete_soup.select("ol.breadcrumb a, .breadcrumb a"):
         href = link.get("href", "")
         if "/teams/" in href:
             return href if href.startswith("http") else TFRRS_BASE + href
-
     for link in athlete_soup.select("a[href*='/teams/tf/'], a[href*='/teams/xc/']"):
         href = link.get("href", "")
-        text = link.get_text(strip=True)
-        if href and len(text) > 3:
+        if href and len(link.get_text(strip=True)) > 3:
             return href if href.startswith("http") else TFRRS_BASE + href
-
     return None
 
 
-def scrape_team_roster(team_url: str) -> list[dict]:
-    """
-    Scrape a TFRRS team page for all athlete links.
+def team_base_url(team_url: str) -> str:
+    """Strip .html to get the base for year-specific pages."""
+    return re.sub(r"\.html$", "", team_url.rstrip("/"))
 
-    Per spec: collect athlete links automatically from the page.
-    Returns list of {name, tfrrs_url, tfrrs_id} dicts.
-    """
-    soup = fetch(team_url)
+
+def year_roster_url(base: str, year: int) -> str:
+    """Build a year-specific TFRRS roster URL: {base}/{year}.html"""
+    return f"{base}/{year}.html"
+
+
+def scrape_team_roster(roster_url: str) -> list:
+    soup = fetch(roster_url)
     if not soup:
         return []
 
-    athletes = []
-    seen_ids: set[str] = set()
+    athletes:  list = []
+    seen_ids:  set  = set()
 
-    # Per spec: collect links automatically — select all /athletes/ hrefs
     for link in soup.select("a[href*='/athletes/']"):
         href = link.get("href", "")
         name = link.get_text(strip=True)
-
         if not name or len(name) < 3 or len(name) > 60:
             continue
         if any(x in name.lower() for x in ("indoor", "outdoor", "cross", "relay", "team")):
             continue
-
         m = re.search(r"/athletes/(\d+)/", href)
         if not m:
             continue
-
         tfrrs_id = m.group(1)
         if tfrrs_id in seen_ids:
             continue
         seen_ids.add(tfrrs_id)
-
         full_url = href if href.startswith("http") else TFRRS_BASE + href
-        athletes.append({
-            "name":      name,
-            "tfrrs_url": full_url,
-            "tfrrs_id":  tfrrs_id,
-        })
+        athletes.append({"name": name, "tfrrs_url": full_url, "tfrrs_id": tfrrs_id})
 
-    log.info(f"  Team roster: {len(athletes)} athletes found")
+    log.info(f"    Roster: {len(athletes)} athletes")
     return athletes
 
 
@@ -605,8 +446,7 @@ def get_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-def load_schools(supabase: Client) -> list[dict]:
-    """Return one sample tfrrs_url per distinct school already in the DB."""
+def load_schools(supabase: Client) -> list:
     result = (
         supabase.table("athletes")
         .select("college, conference, tfrrs_url")
@@ -615,7 +455,7 @@ def load_schools(supabase: Client) -> list[dict]:
         .neq("tfrrs_url", "")
         .execute()
     )
-    seen: dict[str, dict] = {}
+    seen: dict = {}
     for row in (result.data or []):
         college = (row.get("college") or "").strip()
         if college and college not in seen:
@@ -628,16 +468,11 @@ def load_schools(supabase: Client) -> list[dict]:
     return list(seen.values())
 
 
-def load_existing_ids(supabase: Client) -> set[str]:
-    """
-    Load ALL existing TFRRS athlete identifiers to skip athletes already in DB.
-    Paginates in batches of 1000 to avoid Supabase row limit.
-    Checks both 'id' and 'source_id' — older records have id=tfrrs_XXXX but
-    source_id NULL; newer records have both set.
-    """
-    ids: set[str] = set()
-    batch_size = 1000
-    offset = 0
+def load_existing_ids(supabase: Client) -> set:
+    """Paginate through all TFRRS athletes to build the full skip-set."""
+    ids:        set = set()
+    batch_size: int = 1000
+    offset:     int = 0
     while True:
         result = (
             supabase.table("athletes")
@@ -662,32 +497,48 @@ def load_existing_ids(supabase: Client) -> set[str]:
 def insert_athlete(supabase: Client, payload: dict, dry_run: bool) -> Optional[str]:
     if dry_run:
         log.info(
-            f"  [DRY RUN] INSERT athlete: {payload['name']} | "
-            f"{payload['college']} | grad_year={payload.get('grad_year')} | "
-            f"id={payload['id']}"
+            f"    [DRY RUN] INSERT: {payload['name']} | "
+            f"{payload['college']} | grad_year={payload.get('grad_year')}"
         )
         return None
     try:
-        # upsert with ignore_duplicates=True -> ON CONFLICT DO NOTHING
         res = supabase.table("athletes").upsert(payload, ignore_duplicates=True).execute()
         if res.data:
             return res.data[0]["id"]
     except Exception as e:
-        log.warning(f"  Athlete insert failed ({payload.get('name')}): {e}")
+        log.warning(f"    Insert failed ({payload.get('name')}): {e}")
     return None
 
 
-def insert_performances(supabase: Client, perfs: list[dict], dry_run: bool):
+def update_athlete_grad_year(
+    supabase: Client, athlete_id: str, grad_year: int,
+    hs_grad_year: int, events: list, dry_run: bool,
+) -> bool:
+    if dry_run:
+        log.info(f"    [DRY RUN] UPDATE grad_year={grad_year} on id={athlete_id}")
+        return True
+    try:
+        payload: dict = {"grad_year": grad_year, "hs_grad_year": hs_grad_year}
+        if events:
+            payload["events"] = events
+        supabase.table("athletes").update(payload).eq("id", athlete_id).execute()
+        return True
+    except Exception as e:
+        log.warning(f"    Update failed for {athlete_id}: {e}")
+        return False
+
+
+def insert_performances(supabase: Client, perfs: list, dry_run: bool):
     if not perfs:
         return
     if dry_run:
-        log.info(f"  [DRY RUN] INSERT {len(perfs)} performances")
+        log.info(f"    [DRY RUN] INSERT {len(perfs)} performances")
         return
     try:
         for i in range(0, len(perfs), 50):
             supabase.table("performances").insert(perfs[i:i + 50]).execute()
     except Exception as e:
-        log.warning(f"  Performance insert failed: {e}")
+        log.warning(f"    Performance insert failed: {e}")
 
 
 # ── Core athlete processing ───────────────────────────────────────────────────
@@ -695,21 +546,20 @@ def insert_performances(supabase: Client, perfs: list[dict], dry_run: bool):
 def process_athlete(
     candidate:    dict,
     school:       dict,
-    existing_ids: set[str],
+    target_year:  int,
+    existing_ids: set,
     supabase:     Client,
     dry_run:      bool,
-    target_years: set[int],
 ) -> str:
     """
-    Evaluate one athlete candidate and insert if they qualify.
+    Evaluate one athlete from a year-specific roster.
 
-    Returns "added" | "skipped" (already in DB) | "not_senior" | "error"
+    Checks that last_spring == target_year (they were a senior that year).
+    Returns: "added" | "updated" | "not_senior" | "error"
     """
-    tfrrs_id  = candidate["tfrrs_id"]
-    source_id = f"tfrrs_{tfrrs_id}"
-
-    if source_id in existing_ids:
-        return "skipped"
+    tfrrs_id       = candidate["tfrrs_id"]
+    source_id      = f"tfrrs_{tfrrs_id}"
+    already_exists = source_id in existing_ids
 
     url = candidate["tfrrs_url"]
     perfs, info = scrape_athlete(url, athlete_id=0)
@@ -717,17 +567,17 @@ def process_athlete(
 
     last_spring = info.get("last_spring")
 
-    if last_spring not in target_years:
+    # Must have finished their career in exactly target_year
+    if last_spring != target_year:
         return "not_senior"
 
-    # Require at least 2 seasons — filters walk-ons who only competed once
+    # Require at least 2 seasons — filters walk-ons / redshirt transfers
     if info.get("num_seasons", 0) < 2:
         return "not_senior"
 
     grad_year    = last_spring
     hs_grad_year = last_spring - 4
 
-    # Gender: page-parsed first, then URL signal as fallback
     gender = info.get("gender")
     if not gender:
         u = url.lower()
@@ -736,17 +586,19 @@ def process_athlete(
         elif "_m_" in u or "/men/" in u:
             gender = "M"
 
-    # Name: candidate name from the roster is usually "Last, First" — keep it
-    # as a safe fallback; the print page title may contain a cleaner form.
-    name = candidate["name"]
-
+    name   = candidate["name"]
     events = sorted({p["event"] for p in perfs})
 
     log.info(
-        f"  ✓ grad {grad_year}: {name} | {school['college']} | "
-        f"hs_grad={hs_grad_year} | {len(perfs)} performances "
-        f"({info['num_seasons']} seasons)"
+        f"    ✓ {name} | grad={grad_year} | hs_grad={hs_grad_year} | "
+        f"{len(perfs)} perfs ({info['num_seasons']} seasons)"
     )
+
+    if already_exists:
+        update_athlete_grad_year(
+            supabase, source_id, grad_year, hs_grad_year, events or None, dry_run
+        )
+        return "updated"
 
     payload = {
         "id":           source_id,
@@ -779,21 +631,21 @@ def process_athlete(
 def main():
     parser = argparse.ArgumentParser(description="TrackScout historical seniors scraper")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Read-only mode — log what would be inserted, write nothing")
+                        help="Read-only mode — log what would happen, write nothing")
     parser.add_argument("--limit", type=int, default=None,
                         help="Max schools to process (default: all)")
     parser.add_argument("--years", type=int, nargs="+",
                         default=[2023, 2024, 2025], metavar="YEAR",
                         help="Target graduation spring years (default: 2023 2024 2025)")
     parser.add_argument("--debug", action="store_true",
-                        help="Enable DEBUG logging for per-athlete detail")
+                        help="Enable DEBUG logging")
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    target_years = set(args.years)
-    log.info(f"Target graduation years: {sorted(target_years)}")
+    target_years = sorted(args.years)
+    log.info(f"Target graduation years: {target_years}")
     if args.dry_run:
         log.info("DRY RUN — no writes to Supabase")
 
@@ -804,15 +656,15 @@ def main():
         log.info(f"Limited to {args.limit} schools")
 
     existing_ids = load_existing_ids(supabase)
-
-    counters = {"added": 0, "skipped": 0, "not_senior": 0, "error": 0}
+    counters = {"added": 0, "updated": 0, "not_senior": 0, "error": 0}
+    total_schools = len(schools)
 
     for idx, school in enumerate(schools, 1):
         college    = school["college"]
         sample_url = school["sample_url"]
-        log.info(f"\n[{idx}/{len(schools)}] {college}")
+        log.info(f"\n[{idx}/{total_schools}] {college}")
 
-        # Step 1: find team page URL from sample athlete page
+        # ── Resolve team base URL ──────────────────────────────────────────────
         sample_soup = fetch(sample_url)
         time.sleep(REQUEST_DELAY)
         if not sample_soup:
@@ -822,17 +674,7 @@ def main():
 
         team_url = find_team_url(sample_soup)
 
-        # Override: known schools whose athlete pages lack a breadcrumb link
-        if not team_url and college in TEAM_URL_OVERRIDES:
-            for candidate_url in TEAM_URL_OVERRIDES[college]:
-                test = fetch(candidate_url)
-                time.sleep(REQUEST_DELAY)
-                if test and test.select("a[href*='/athletes/']"):
-                    team_url = candidate_url
-                    log.info(f"  Override team URL: {team_url}")
-                    break
-
-        # Fallback: construct team URL from athlete URL slug
+        # Fallback: construct from athlete URL slug
         if not team_url:
             m = re.search(r"/athletes/\d+/([^/]+)/", sample_url)
             if m:
@@ -851,34 +693,43 @@ def main():
             counters["error"] += 1
             continue
 
-        log.info(f"  Team URL: {team_url}")
+        base = team_base_url(team_url)
+        log.info(f"  Base: {base}")
 
-        # Step 2: collect all athlete candidates from the team roster
-        roster = scrape_team_roster(team_url)
-        time.sleep(REQUEST_DELAY)
-        if not roster:
-            log.warning(f"  Empty roster for {college}")
-            continue
+        # ── For each target year, scrape the year-specific roster ──────────────
+        for year in target_years:
+            roster_url = year_roster_url(base, year)
+            log.info(f"  [{year}] {roster_url}")
 
-        # Step 3: evaluate each candidate
-        added_this_school = 0
-        for candidate in roster:
-            result = process_athlete(
-                candidate, school, existing_ids,
-                supabase, args.dry_run, target_years,
-            )
-            counters[result] = counters.get(result, 0) + 1
-            if result == "added":
-                added_this_school += 1
+            roster = scrape_team_roster(roster_url)
+            time.sleep(REQUEST_DELAY)
 
-        log.info(f"  → {added_this_school} new seniors added from {college}")
+            if not roster:
+                log.info(f"  [{year}] No athletes (page may not exist)")
+                continue
+
+            added_yr   = 0
+            updated_yr = 0
+
+            for candidate in roster:
+                result = process_athlete(
+                    candidate, school, year,
+                    existing_ids, supabase, args.dry_run,
+                )
+                counters[result] = counters.get(result, 0) + 1
+                if result == "added":
+                    added_yr += 1
+                elif result == "updated":
+                    updated_yr += 1
+
+            log.info(f"  [{year}] → {added_yr} added, {updated_yr} updated")
 
     # ── Summary ───────────────────────────────────────────────────────────────
     log.info(f"\n{'=' * 60}")
     log.info("Done.")
-    log.info(f"  Schools processed : {len(schools)}")
+    log.info(f"  Schools processed : {total_schools}")
     log.info(f"  Athletes added    : {counters['added']}")
-    log.info(f"  Already in DB     : {counters['skipped']}")
+    log.info(f"  Athletes updated  : {counters['updated']}")
     log.info(f"  Not senior/target : {counters['not_senior']}")
     log.info(f"  Errors            : {counters['error']}")
 
