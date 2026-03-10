@@ -401,14 +401,28 @@ def find_team_url(athlete_soup: BeautifulSoup) -> Optional[str]:
     return None
 
 
-def team_base_url(team_url: str) -> str:
-    """Strip .html to get the base for year-specific pages."""
-    return re.sub(r"\.html$", "", team_url.rstrip("/"))
+# config_hnd values are global season identifiers — same for every school.
+# We use the OUTDOOR season (final season of each year) to find seniors.
+SEASON_HND: dict[int, int] = {
+    2023: 290,   # 2023 outdoor
+    2024: 333,   # 2024 outdoor
+    2025: 380,   # 2025 outdoor
+}
 
 
-def year_roster_url(base: str, year: int) -> str:
-    """Build a year-specific TFRRS roster URL: {base}/{year}.html"""
-    return f"{base}/{year}.html"
+def year_roster_url(team_url: str, year: int) -> str:
+    """
+    Build a year-specific TFRRS roster URL using the global config_hnd.
+
+    team_url = https://www.tfrrs.org/teams/tf/NY_college_m_Syracuse.html
+    year     = 2023
+    →          https://www.tfrrs.org/teams/tf/NY_college_m_Syracuse.html?config_hnd=290
+    """
+    base = team_url.split("?")[0]   # strip any existing query string
+    hnd  = SEASON_HND.get(year)
+    if not hnd:
+        raise ValueError(f"No config_hnd known for year {year}")
+    return f"{base}?config_hnd={hnd}"
 
 
 def scrape_team_roster(roster_url: str) -> list:
@@ -693,12 +707,14 @@ def main():
             counters["error"] += 1
             continue
 
-        base = team_base_url(team_url)
-        log.info(f"  Base: {base}")
+        log.info(f"  Team URL: {team_url}")
 
         # ── For each target year, scrape the year-specific roster ──────────────
         for year in target_years:
-            roster_url = year_roster_url(base, year)
+            if year not in SEASON_HND:
+                log.warning(f"  [{year}] No config_hnd known, skipping")
+                continue
+            roster_url = year_roster_url(team_url, year)
             log.info(f"  [{year}] {roster_url}")
 
             roster = scrape_team_roster(roster_url)
