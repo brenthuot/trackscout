@@ -461,6 +461,13 @@ def get_supabase() -> Client:
 
 
 def load_schools(supabase: Client) -> list:
+    """
+    Return one entry per (college, gender) combination so both men's and
+    women's teams are scraped for each school.
+
+    TFRRS URLs embed gender as _m_ or _f_ in the path, so a school with
+    both programs will have two distinct team URLs in the DB.
+    """
     result = (
         supabase.table("athletes")
         .select("college, conference, tfrrs_url")
@@ -469,17 +476,35 @@ def load_schools(supabase: Client) -> list:
         .neq("tfrrs_url", "")
         .execute()
     )
+
+    # Key = (college, gender) so we get one sample URL per team
     seen: dict = {}
     for row in (result.data or []):
         college = (row.get("college") or "").strip()
-        if college and college not in seen:
-            seen[college] = {
+        url     = (row.get("tfrrs_url") or "").strip()
+        if not college or not url:
+            continue
+
+        # Detect gender from URL: _m_ = men, _f_ = women, unknown = None
+        if "_college_m_" in url or "_m_" in url:
+            gender = "M"
+        elif "_college_f_" in url or "_f_" in url:
+            gender = "F"
+        else:
+            gender = "U"
+
+        key = (college, gender)
+        if key not in seen:
+            seen[key] = {
                 "college":    college,
                 "conference": (row.get("conference") or "").strip(),
-                "sample_url": row["tfrrs_url"],
+                "sample_url": url,
+                "gender":     gender,
             }
-    log.info(f"Loaded {len(seen)} distinct schools from DB")
-    return list(seen.values())
+
+    teams = list(seen.values())
+    log.info(f"Loaded {len(teams)} distinct school/gender teams from DB")
+    return teams
 
 
 def load_existing_ids(supabase: Client) -> set:
