@@ -69,6 +69,15 @@ HEADERS = {
 
 REQUEST_DELAY  = 1.2   # seconds between TFRRS requests
 TFRRS_BASE     = "https://www.tfrrs.org"
+
+# Schools whose athlete pages lack a team breadcrumb link.
+# Maps college name (as stored in DB) -> list of known team page URLs to try.
+TEAM_URL_OVERRIDES: dict[str, list[str]] = {
+    "BYU": [
+        "https://www.tfrrs.org/teams/tf/UT_college_m_BYU.html",
+        "https://www.tfrrs.org/teams/tf/UT_college_f_BYU.html",
+    ],
+}
 YEAR_MIN       = 2015
 YEAR_MAX       = 2026
 
@@ -621,22 +630,31 @@ def load_schools(supabase: Client) -> list[dict]:
 
 def load_existing_ids(supabase: Client) -> set[str]:
     """
-    Load all existing TFRRS athlete identifiers to skip athletes already in DB.
+    Load ALL existing TFRRS athlete identifiers to skip athletes already in DB.
+    Paginates in batches of 1000 to avoid Supabase row limit.
     Checks both 'id' and 'source_id' — older records have id=tfrrs_XXXX but
     source_id NULL; newer records have both set.
     """
-    result = (
-        supabase.table("athletes")
-        .select("id, source_id")
-        .eq("source", "tfrrs")
-        .execute()
-    )
     ids: set[str] = set()
-    for row in (result.data or []):
-        if row.get("id"):
-            ids.add(str(row["id"]))
-        if row.get("source_id"):
-            ids.add(str(row["source_id"]))
+    batch_size = 1000
+    offset = 0
+    while True:
+        result = (
+            supabase.table("athletes")
+            .select("id, source_id")
+            .eq("source", "tfrrs")
+            .range(offset, offset + batch_size - 1)
+            .execute()
+        )
+        rows = result.data or []
+        for row in rows:
+            if row.get("id"):
+                ids.add(str(row["id"]))
+            if row.get("source_id"):
+                ids.add(str(row["source_id"]))
+        if len(rows) < batch_size:
+            break
+        offset += batch_size
     log.info(f"  {len(ids)} athletes already in DB")
     return ids
 
@@ -803,6 +821,16 @@ def main():
             continue
 
         team_url = find_team_url(sample_soup)
+
+        # Override: known schools whose athlete pages lack a breadcrumb link
+        if not team_url and college in TEAM_URL_OVERRIDES:
+            for candidate_url in TEAM_URL_OVERRIDES[college]:
+                test = fetch(candidate_url)
+                time.sleep(REQUEST_DELAY)
+                if test and test.select("a[href*='/athletes/']"):
+                    team_url = candidate_url
+                    log.info(f"  Override team URL: {team_url}")
+                    break
 
         # Fallback: construct team URL from athlete URL slug
         if not team_url:
