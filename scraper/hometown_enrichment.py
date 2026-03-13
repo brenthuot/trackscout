@@ -17,6 +17,8 @@ Step 1 — TFRRS Profile Pass
 Step 2 — Roster Page Pass
   Finds all schools that still have athletes with null hometowns, then scrapes
   their official Sidearm roster pages using requests + BeautifulSoup.
+  Includes archived year roster pages (2022-23, 2023-24, 2024-25) so that
+  backdated seniors who have already graduated can still be matched.
   Builds an in-memory normalised-name lookup at startup — no per-athlete DB
   queries during the scrape. Updates only — never inserts new athletes.
 
@@ -133,7 +135,6 @@ def parse_city_state(raw: str) -> Optional[str]:
     raw = raw.strip()
     raw = re.sub(r",?\s*U\.?S\.?A\.?\s*$", "", raw, flags=re.I).strip()
     raw = raw.strip("()")
-    # Split on last comma
     m = re.match(r"^(.+?),\s*(.+)$", raw)
     if not m:
         return None
@@ -294,7 +295,6 @@ def _strategy_text_regex(soup: BeautifulSoup) -> Optional[str]:
     """Strategy 3: 'Hometown: City, ST' inline or 'Hometown\\nCity, ST' two-line."""
     text = soup.get_text(separator="\n")
 
-    # Inline: "Hometown: Seattle, WA" or "Hometown  Seattle, WA"
     m = re.search(
         r"Hometown[:\s]+([A-Za-z][A-Za-z\s\.'\-]{1,40}),\s*([A-Z][a-zA-Z\s\.]{1,25})",
         text,
@@ -304,7 +304,6 @@ def _strategy_text_regex(soup: BeautifulSoup) -> Optional[str]:
         if result:
             return result
 
-    # Two-line: standalone "Hometown" then value on next non-blank line
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     for i, line in enumerate(lines):
         if line.lower() == "hometown" and i + 1 < len(lines):
@@ -315,9 +314,8 @@ def _strategy_text_regex(soup: BeautifulSoup) -> Optional[str]:
 
 def _strategy_bio_scan(soup: BeautifulSoup) -> Optional[str]:
     """
-    Strategy 4: Scan the header/bio section (content before the first
-    performance table) for a 'City, ST' pattern with a hard 2-letter state
-    code.  Conservative to reduce false positives.
+    Strategy 4: Scan the header/bio section for a 'City, ST' pattern with a
+    hard 2-letter state code. Conservative to reduce false positives.
     """
     first_table = soup.find("table")
     if first_table and soup.body:
@@ -348,20 +346,17 @@ def _strategy_bio_scan(soup: BeautifulSoup) -> Optional[str]:
 
 def _extract_high_school(soup: BeautifulSoup) -> Optional[str]:
     """Best-effort high school extraction from a TFRRS profile."""
-    # dl/dt/dd
     for dt in soup.find_all("dt"):
         if "high school" in dt.get_text(strip=True).lower():
             dd = dt.find_next_sibling("dd")
             if dd:
                 return dd.get_text(strip=True)[:120]
-    # table rows
     for row in soup.find_all("tr"):
         cells = row.find_all(["th", "td"])
         if len(cells) >= 2 and "high school" in cells[0].get_text(strip=True).lower():
             text = cells[1].get_text(strip=True)
             if len(text) > 2:
                 return text[:120]
-    # plain text
     text = soup.get_text(separator="\n")
     m = re.search(r"High School[:\s]+(.+)", text, re.I)
     if m:
@@ -389,7 +384,6 @@ def scrape_tfrrs_for_hometown(url: str) -> dict:
 
     result["high_school"] = _extract_high_school(soup)
 
-    # Last-resort: parenthetical in high school name
     if not result["hometown"] and result["high_school"]:
         result["hometown"] = _hs_parenthetical_hometown(result["high_school"])
 
@@ -427,7 +421,6 @@ def run_step1(supabase: Client, dry_run: bool, limit: int) -> int:
             log.info(f"  ✓ hometown: {scraped['hometown']}")
             found += 1
 
-        # Only write high_school when currently missing
         existing_hs = (athlete.get("high_school") or "").strip()
         if scraped["high_school"] and not existing_hs:
             payload["high_school"] = scraped["high_school"]
@@ -455,7 +448,7 @@ def run_step1(supabase: Client, dry_run: bool, limit: int) -> int:
 # STEP 2 — Roster Page Pass
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Official roster URLs (requests-only, no Playwright needed for static pages).
+# Official current-season roster URLs (requests-only, no Playwright needed).
 # Sourced from roster_scraper.py — the full Playwright version is authoritative
 # for JS-heavy sites; this pass covers what static HTML can provide cheaply.
 ROSTER_URLS: list[dict] = [
@@ -518,6 +511,7 @@ ROSTER_URLS: list[dict] = [
     {"school": "Tennessee",         "url": "https://utsports.com/sports/track-and-field/roster"},
     {"school": "Texas",             "url": "https://texassports.com/sports/track-and-field/roster"},
     {"school": "Texas A&M",         "url": "https://12thman.com/sports/track-and-field/roster"},
+    {"school": "Vanderbilt",        "url": "https://vucommodores.com/sports/wtrack/roster/"},
     # Big 12
     {"school": "Arizona",           "url": "https://arizonawildcats.com/sports/track-and-field/roster"},
     {"school": "Arizona State",     "url": "https://thesundevils.com/sports/track-field/roster"},
@@ -535,7 +529,7 @@ ROSTER_URLS: list[dict] = [
     {"school": "Texas Tech",        "url": "https://texastech.com/sports/track-and-field/roster"},
     {"school": "Utah",              "url": "https://utahutes.com/sports/track-and-field/roster"},
     {"school": "West Virginia",     "url": "https://wvusports.com/sports/womens-track-and-field/roster"},
-    # Ivy
+    # Ivy League
     {"school": "Brown",             "url": "https://brownbears.com/sports/mens-track-and-field/roster"},
     {"school": "Brown",             "url": "https://brownbears.com/sports/womens-track-and-field/roster"},
     {"school": "Columbia",          "url": "https://gocolumbialions.com/sports/track-and-field/roster"},
@@ -544,6 +538,8 @@ ROSTER_URLS: list[dict] = [
     {"school": "Dartmouth",         "url": "https://dartmouthsports.com/sports/mens-track-and-field/roster"},
     {"school": "Dartmouth",         "url": "https://dartmouthsports.com/sports/womens-track-and-field/roster"},
     {"school": "Harvard",           "url": "https://gocrimson.com/sports/mens-track-and-field/roster"},
+    {"school": "Pennsylvania",      "url": "https://pennathletics.com/sports/mens-track-and-field/roster"},
+    {"school": "Pennsylvania",      "url": "https://pennathletics.com/sports/womens-track-and-field/roster"},
     {"school": "Princeton",         "url": "https://goprincetontigers.com/sports/mens-track-and-field/roster"},
     {"school": "Princeton",         "url": "https://goprincetontigers.com/sports/womens-track-and-field/roster"},
     {"school": "Yale",              "url": "https://yalebulldogs.com/sports/mens-track-and-field/roster"},
@@ -551,37 +547,26 @@ ROSTER_URLS: list[dict] = [
     # Big East
     {"school": "Butler",            "url": "https://butlersports.com/sports/mens-track-and-field/roster"},
     {"school": "Butler",            "url": "https://butlersports.com/sports/womens-track-and-field/roster"},
-    {"school": "Georgetown",        "url": "https://guhoyas.com/sports/mens-track-and-field-xc/roster"},
-    {"school": "Georgetown",        "url": "https://guhoyas.com/sports/womens-track-and-field/roster"},
-    {"school": "Marquette",         "url": "https://gomarquette.com/sports/track-and-field/roster"},
-    {"school": "Providence",        "url": "https://friars.com/sports/mens-track-and-field/roster"},
-    {"school": "Providence",        "url": "https://friars.com/sports/womens-track-and-field/roster"},
     {"school": "Connecticut",       "url": "https://uconnhuskies.com/sports/mens-track-and-field/roster"},
     {"school": "Connecticut",       "url": "https://uconnhuskies.com/sports/womens-track-and-field/roster"},
+    {"school": "Georgetown",        "url": "https://guhoyas.com/sports/mens-track-and-field/roster"},
+    {"school": "Georgetown",        "url": "https://guhoyas.com/sports/womens-track-and-field/roster"},
     {"school": "Villanova",         "url": "https://villanova.com/sports/mens-track-and-field/roster"},
     {"school": "Villanova",         "url": "https://villanova.com/sports/womens-track-and-field/roster"},
+    {"school": "Xavier",            "url": "https://goxavier.com/sports/track-and-field/roster"},
     # Mountain West
     {"school": "Air Force",         "url": "https://goairforcefalcons.com/sports/track-and-field/roster"},
     {"school": "Boise State",       "url": "https://broncosports.com/sports/track-and-field/roster"},
     {"school": "Colorado State",    "url": "https://csurams.com/sports/track-and-field/roster"},
     {"school": "Fresno State",      "url": "https://gobulldogs.com/sports/track-and-field/roster"},
+    {"school": "Hawaii",            "url": "https://hawaiiathletics.com/sports/womens-track-and-field/roster"},
+    {"school": "Nevada",            "url": "https://nevadawolfpack.com/sports/womens-track-and-field/roster"},
     {"school": "New Mexico",        "url": "https://golobos.com/sports/track/roster"},
     {"school": "San Diego State",   "url": "https://goaztecs.com/sports/track-and-field/roster"},
     {"school": "San Jose State",    "url": "https://sjsuspartans.com/sports/track-and-field/roster"},
+    {"school": "UNLV",              "url": "https://unlvrebels.com/sports/womens-track-and-field/roster"},
     {"school": "Utah State",        "url": "https://utahstateaggies.com/sports/track-and-field/roster"},
     {"school": "Wyoming",           "url": "https://gowyo.com/sports/track-and-field/roster"},
-    # Big Sky
-    {"school": "Eastern Washington","url": "https://goeags.com/sports/track-and-field/roster"},
-    {"school": "Idaho",             "url": "https://govandals.com/sports/tfxc/roster"},
-    {"school": "Montana",           "url": "https://gogriz.com/sports/mens-track-and-field/roster"},
-    {"school": "Montana",           "url": "https://gogriz.com/sports/womens-track-and-field/roster"},
-    {"school": "Montana State",     "url": "https://msubobcats.com/sports/mens-track-and-field/roster"},
-    {"school": "Montana State",     "url": "https://msubobcats.com/sports/womens-track-and-field/roster"},
-    {"school": "Northern Arizona",  "url": "https://nauathletics.com/sports/track-and-field/roster"},
-    {"school": "Northern Colorado", "url": "https://uncbears.com/sports/track-and-field/roster"},
-    {"school": "Sacramento State",  "url": "https://hornetsports.com/sports/track/roster"},
-    {"school": "Weber State",       "url": "https://weberstatesports.com/sports/mens-track-and-field/roster"},
-    {"school": "Weber State",       "url": "https://weberstatesports.com/sports/track-and-field/roster"},
     # Atlantic 10
     {"school": "Dayton",            "url": "https://daytonflyers.com/sports/womens-track-and-field/roster"},
     {"school": "Fordham",           "url": "https://fordhamsports.com/sports/mens-track-and-field/roster"},
@@ -594,8 +579,56 @@ ROSTER_URLS: list[dict] = [
     {"school": "Saint Louis",       "url": "https://slubillikens.com/sports/track-and-field/roster"},
     {"school": "VCU",               "url": "https://vcuathletics.com/sports/mens-track-and-field/roster"},
     {"school": "VCU",               "url": "https://vcuathletics.com/sports/womens-track-and-field/roster"},
+    # Big Sky
+    {"school": "Montana",           "url": "https://gogriz.com/sports/mens-track-and-field/roster"},
+    {"school": "Montana",           "url": "https://gogriz.com/sports/womens-track-and-field/roster"},
+    {"school": "Montana State",     "url": "https://msubobcats.com/sports/mens-track-and-field/roster"},
+    {"school": "Montana State",     "url": "https://msubobcats.com/sports/womens-track-and-field/roster"},
+    {"school": "Northern Arizona",  "url": "https://nauathletics.com/sports/track-and-field/roster"},
+    {"school": "Northern Colorado", "url": "https://uncbears.com/sports/track-and-field/roster"},
+    {"school": "Sacramento State",  "url": "https://hornetsports.com/sports/track/roster"},
+    {"school": "Weber State",       "url": "https://weberstatesports.com/sports/mens-track-and-field/roster"},
+    {"school": "Weber State",       "url": "https://weberstatesports.com/sports/track-and-field/roster"},
 ]
 
+# Archived academic-year suffixes to append to every roster URL base.
+# Covers all three backdated senior cohorts:
+#   2023 spring seniors → were on the 2022-23 roster
+#   2024 spring seniors → were on the 2023-24 roster
+#   2025 spring seniors → were on the 2024-25 roster
+ARCHIVE_YEARS: list[str] = ["2022-23", "2023-24", "2024-25"]
+
+
+def _build_full_roster_url_list() -> list[dict]:
+    """
+    Expand ROSTER_URLS to include archived year pages alongside the current ones.
+
+    For each entry in ROSTER_URLS, appends one entry per year in ARCHIVE_YEARS
+    using the standard Sidearm /roster/YYYY-YY path pattern.
+
+    Current (unversioned) URLs come first so they're tried before archived pages.
+    Schools that use non-standard URL patterns will produce 404s for some year
+    suffixes; scrape_roster_page() handles request errors gracefully so those
+    silently return zero results without stopping the run.
+    """
+    expanded: list[dict] = []
+
+    # Current rosters first — athletes still on the current page are easy wins
+    expanded.extend(ROSTER_URLS)
+
+    # Archived year pages for each school
+    for entry in ROSTER_URLS:
+        base = entry["url"].rstrip("/")
+        # Strip any existing year suffix so we don't double-append
+        # e.g. Nebraska's ".../roster/2025-26" → ".../roster"
+        base = re.sub(r"/\d{4}-\d{2}$", "", base)
+        for yr in ARCHIVE_YEARS:
+            expanded.append({"school": entry["school"], "url": f"{base}/{yr}"})
+
+    return expanded
+
+
+# ── Roster HTML parser ────────────────────────────────────────────────────────
 
 def _parse_roster_html(html: str, school: str) -> list[dict]:
     """
@@ -605,81 +638,66 @@ def _parse_roster_html(html: str, school: str) -> list[dict]:
                Works for dl/dt/dd, span+span, and similar label-value pairs.
     Pattern B: <table> with a column header containing 'hometown'.
     """
-    soup = BeautifulSoup(html, "html.parser")
-    results: list[dict] = []
+    soup    = BeautifulSoup(html, "html.parser")
+    results = []
+    seen    = set()
 
-    # ── Pattern A ─────────────────────────────────────────────────────────────
-    for el in soup.find_all(string=re.compile(r"^Hometown$", re.I)):
-        parent = el.parent
-        sibling = parent.find_next_sibling()
-        if sibling:
-            ht = parse_city_state(sibling.get_text(strip=True))
-            if ht:
-                name = _find_nearby_name(parent)
-                if name:
-                    results.append({"name": name, "hometown": ht})
-
-    if results:
-        return _dedup(results)
-
-    # ── Pattern B ─────────────────────────────────────────────────────────────
-    for table in soup.find_all("table"):
-        ths = table.find_all("th")
-        if not ths:
+    # Pattern A — label/value pairs
+    for label_el in soup.find_all(string=re.compile(r"(?i)^hometown$")):
+        parent = label_el.parent
+        if not parent:
             continue
-        header_texts = [h.get_text(strip=True).lower() for h in ths]
-        ht_col   = next((i for i, h in enumerate(header_texts) if "hometown" in h), None)
-        name_col = next((i for i, h in enumerate(header_texts) if "name" in h), 0)
+        # Try next sibling element
+        sib = parent.find_next_sibling()
+        if sib:
+            value = sib.get_text(strip=True)
+            ht = parse_city_state(value)
+            if ht:
+                # Walk up to find the athlete name in the same card
+                card = parent
+                for _ in range(6):
+                    card = card.parent
+                    if not card:
+                        break
+                    name_el = card.find(
+                        re.compile(r"^(h[1-6]|a)$"),
+                        class_=re.compile(r"(?i)(name|title|athlete)")
+                    ) or card.find("h3") or card.find("h4") or card.find("h2")
+                    if name_el:
+                        name = name_el.get_text(strip=True)
+                        if name and len(name) > 3 and name not in seen:
+                            seen.add(name)
+                            results.append({"name": name, "hometown": ht})
+                        break
+
+    # Pattern B — table with Hometown column header
+    for table in soup.find_all("table"):
+        headers = [th.get_text(strip=True).lower() for th in table.select("thead th, thead td")]
+        if not any("hometown" in h for h in headers):
+            continue
+        ht_col   = next((i for i, h in enumerate(headers) if "hometown" in h), None)
+        name_col = next((i for i, h in enumerate(headers) if "name" in h), 0)
         if ht_col is None:
             continue
-        for row in table.find_all("tr")[1:]:
-            cells = row.find_all(["td", "th"])
+        for tr in table.select("tbody tr"):
+            cells = tr.find_all(["td", "th"])
             if len(cells) <= ht_col:
                 continue
-            name_raw = cells[name_col].get_text(strip=True) if len(cells) > name_col else ""
-            ht       = parse_city_state(cells[ht_col].get_text(strip=True))
-            if ht and name_raw and len(name_raw) >= 4:
-                results.append({"name": name_raw, "hometown": ht})
+            name = cells[name_col].get_text(strip=True) if len(cells) > name_col else ""
+            raw_ht = cells[ht_col].get_text(strip=True)
+            ht = parse_city_state(raw_ht)
+            if name and ht and name not in seen:
+                seen.add(name)
+                results.append({"name": name, "hometown": ht})
 
-    return _dedup(results)
-
-
-def _find_nearby_name(el) -> Optional[str]:
-    """Walk backwards through the DOM to find the nearest athlete name element."""
-    SKIP_LOWER = {
-        "hometown", "high school", "hometown / high school",
-        "event", "year", "class", "height", "weight",
-    }
-    for _ in range(25):
-        el = el.find_previous()
-        if not el or not hasattr(el, "get_text"):
-            break
-        text = el.get_text(strip=True)
-        if not text or text.lower() in SKIP_LOWER:
-            continue
-        words = text.split()
-        if (
-            2 <= len(words) <= 5
-            and re.match(r"[A-Z][a-z]", text)
-            and not re.search(r"\d", text)
-        ):
-            return text
-    return None
+    return results
 
 
-def _dedup(items: list[dict]) -> list[dict]:
-    seen, out = set(), []
-    for r in items:
-        k = normalize(r["name"])
-        if k not in seen:
-            seen.add(k)
-            out.append(r)
-    return out
-
+# ── Name index & lookup ───────────────────────────────────────────────────────
 
 def build_name_index(db_rows: list[dict]) -> dict:
     """
-    Build a normalised-name lookup from DB rows.
+    Build a fast lookup index from DB rows.
     Key: (normalised_name, normalised_college) → list[athlete_dict]
     """
     idx: dict[tuple, list] = {}
@@ -699,14 +717,12 @@ def lookup_athlete(idx: dict, name: str, college: str) -> Optional[dict]:
     nname    = normalize(name)
     ncollege = normalize(college)
 
-    # Tier 1
     matches = idx.get((nname, ncollege), [])
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
-        return None  # ambiguous
+        return None
 
-    # Tier 2: first + last only
     parts = nname.split()
     if len(parts) >= 3:
         short   = f"{parts[0]} {parts[-1]}"
@@ -730,21 +746,24 @@ def scrape_roster_page(url: str, school: str) -> list[dict]:
 
 def run_step2(supabase: Client, dry_run: bool, limit: int) -> int:
     """
-    Scrape official roster pages for schools that still have athletes missing
-    hometowns.  Updates only athletes with hometown IS NULL — never overwrites.
+    Scrape official roster pages (current + archived years) for schools that
+    still have athletes missing hometowns.
+    Updates only athletes with hometown IS NULL — never overwrites.
     Returns number of athletes updated.
     """
     log.info("=" * 60)
-    log.info("STEP 2 — Roster Page Pass")
+    log.info("STEP 2 — Roster Page Pass (current + archived years)")
     log.info("=" * 60)
 
     schools_needing_work = set(fetch_schools_with_missing_hometowns(supabase))
     log.info(f"  {len(schools_needing_work)} schools still have athletes with missing hometowns")
 
-    # Only process schools we have roster URLs for
-    relevant = [r for r in ROSTER_URLS if r["school"] in schools_needing_work]
+    # Build the full expanded URL list (current + 2022-23, 2023-24, 2024-25)
+    all_roster_urls  = _build_full_roster_url_list()
+    relevant         = [r for r in all_roster_urls if r["school"] in schools_needing_work]
     relevant_schools = sorted({r["school"] for r in relevant})
     log.info(f"  {len(relevant_schools)} of those have roster URLs in this script")
+    log.info(f"  {len(relevant)} total pages to scrape (current + archived years)")
 
     if not relevant_schools:
         log.info("  Nothing to do — all schools with missing hometowns lack roster URLs.")
@@ -873,7 +892,6 @@ def main() -> None:
         log.info("DRY RUN — no changes written to Supabase")
     log.info("=" * 60)
 
-    # Kick off geocode backfill immediately so new hometowns get coordinates
     if not args.skip_geocode and total_updated > 0 and not args.dry_run:
         run_geocode_backfill(dry_run=False)
     elif args.dry_run and not args.skip_geocode:
