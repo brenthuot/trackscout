@@ -8,9 +8,11 @@ with their full performance histories.
 Architecture
 ────────────
 1. Pull distinct schools + a sample athlete URL per school from Supabase.
-2. From the sample athlete URL, resolve the school's TFRRS team BASE URL.
+   Falls back to TFRRS_TEAM_URLS for schools with no DB athletes yet.
+2. From the sample athlete URL (or direct team URL), resolve the school's
+   TFRRS team BASE URL.
 3. For each target year, scrape the year-specific roster page:
-     {base_url}/{year}.html  →  every athlete on the team that year
+     {base_url}?config_hnd={hnd}  →  every athlete on the team that year
 4. For each athlete on that year's roster, fetch their PRINT PAGE (?print=1)
    and confirm their last active spring == target_year (i.e. they were a
    senior / final-year athlete that spring).
@@ -20,9 +22,9 @@ Architecture
 TFRRS historical roster URL pattern
 ─────────────────────────────────────
   Current roster:  .../teams/tf/MT_college_f_Montana_State.html
-  2025 roster:     .../teams/tf/MT_college_f_Montana_State/2025.html
-  2024 roster:     .../teams/tf/MT_college_f_Montana_State/2024.html
-  2023 roster:     .../teams/tf/MT_college_f_Montana_State/2023.html
+  2025 roster:     .../teams/tf/MT_college_f_Montana_State.html?config_hnd=380
+  2024 roster:     .../teams/tf/MT_college_f_Montana_State.html?config_hnd=333
+  2023 roster:     .../teams/tf/MT_college_f_Montana_State.html?config_hnd=290
 
 Usage
 ─────
@@ -30,6 +32,8 @@ Usage
   python scraper/historical_seniors_scraper.py --limit 5
   python scraper/historical_seniors_scraper.py
   python scraper/historical_seniors_scraper.py --years 2024 2025
+  python scraper/historical_seniors_scraper.py --school Syracuse
+  python scraper/historical_seniors_scraper.py --school Syracuse --years 2023 2024 2025
 """
 
 import os
@@ -401,13 +405,238 @@ def find_team_url(athlete_soup: BeautifulSoup) -> Optional[str]:
     return None
 
 
-# config_hnd values are global season identifiers — same for every school.
+# ── Season config_hnd values (global TFRRS season identifiers) ────────────────
 # We use the OUTDOOR season (final season of each year) to find seniors.
 SEASON_HND: dict[int, int] = {
     2023: 290,   # 2023 outdoor
     2024: 333,   # 2024 outdoor
     2025: 380,   # 2025 outdoor
 }
+
+# ── Fallback TFRRS team URLs ──────────────────────────────────────────────────
+# Covers schools that may have zero athletes in the DB yet, so load_schools()
+# would otherwise miss them entirely.
+TFRRS_TEAM_URLS: list[dict] = [
+    # ── ACC ───────────────────────────────────────────────────────────────────
+    {"college": "Boston College",    "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MA_college_m_Boston_College.html"},
+    {"college": "Boston College",    "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MA_college_f_Boston_College.html"},
+    {"college": "California",        "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_m_California.html"},
+    {"college": "California",        "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_f_California.html"},
+    {"college": "Clemson",           "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/SC_college_m_Clemson.html"},
+    {"college": "Clemson",           "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/SC_college_f_Clemson.html"},
+    {"college": "Duke",              "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NC_college_m_Duke.html"},
+    {"college": "Duke",              "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NC_college_f_Duke.html"},
+    {"college": "Florida State",     "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/FL_college_m_Florida_State.html"},
+    {"college": "Florida State",     "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/FL_college_f_Florida_State.html"},
+    {"college": "Georgia Tech",      "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/GA_college_m_Georgia_Tech.html"},
+    {"college": "Georgia Tech",      "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/GA_college_f_Georgia_Tech.html"},
+    {"college": "Louisville",        "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/KY_college_m_Louisville.html"},
+    {"college": "Louisville",        "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/KY_college_f_Louisville.html"},
+    {"college": "Miami",             "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/FL_college_m_Miami__FL_.html"},
+    {"college": "Miami",             "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/FL_college_f_Miami__FL_.html"},
+    {"college": "NC State",          "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NC_college_m_NC_State.html"},
+    {"college": "NC State",          "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NC_college_f_NC_State.html"},
+    {"college": "North Carolina",    "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NC_college_m_North_Carolina.html"},
+    {"college": "North Carolina",    "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NC_college_f_North_Carolina.html"},
+    {"college": "Notre Dame",        "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/IN_college_m_Notre_Dame.html"},
+    {"college": "Notre Dame",        "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/IN_college_f_Notre_Dame.html"},
+    {"college": "Pittsburgh",        "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/PA_college_m_Pittsburgh.html"},
+    {"college": "Pittsburgh",        "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/PA_college_f_Pittsburgh.html"},
+    {"college": "SMU",               "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_m_SMU.html"},
+    {"college": "SMU",               "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_f_SMU.html"},
+    {"college": "Stanford",          "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_m_Stanford.html"},
+    {"college": "Stanford",          "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_f_Stanford.html"},
+    {"college": "Syracuse",          "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NY_college_m_Syracuse.html"},
+    {"college": "Syracuse",          "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NY_college_f_Syracuse.html"},
+    {"college": "Virginia",          "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_m_Virginia.html"},
+    {"college": "Virginia",          "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_f_Virginia.html"},
+    {"college": "Virginia Tech",     "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_m_Virginia_Tech.html"},
+    {"college": "Virginia Tech",     "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_f_Virginia_Tech.html"},
+    {"college": "Wake Forest",       "conference": "ACC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NC_college_m_Wake_Forest.html"},
+    {"college": "Wake Forest",       "conference": "ACC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NC_college_f_Wake_Forest.html"},
+    # ── Big Ten ───────────────────────────────────────────────────────────────
+    {"college": "Illinois",          "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/IL_college_m_Illinois.html"},
+    {"college": "Illinois",          "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/IL_college_f_Illinois.html"},
+    {"college": "Indiana",           "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/IN_college_m_Indiana.html"},
+    {"college": "Indiana",           "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/IN_college_f_Indiana.html"},
+    {"college": "Iowa",              "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/IA_college_m_Iowa.html"},
+    {"college": "Iowa",              "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/IA_college_f_Iowa.html"},
+    {"college": "Maryland",          "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MD_college_m_Maryland.html"},
+    {"college": "Maryland",          "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MD_college_f_Maryland.html"},
+    {"college": "Michigan",          "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MI_college_m_Michigan.html"},
+    {"college": "Michigan",          "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MI_college_f_Michigan.html"},
+    {"college": "Michigan State",    "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MI_college_m_Michigan_State.html"},
+    {"college": "Michigan State",    "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MI_college_f_Michigan_State.html"},
+    {"college": "Minnesota",         "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MN_college_m_Minnesota.html"},
+    {"college": "Minnesota",         "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MN_college_f_Minnesota.html"},
+    {"college": "Nebraska",          "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NE_college_m_Nebraska.html"},
+    {"college": "Nebraska",          "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NE_college_f_Nebraska.html"},
+    {"college": "Northwestern",      "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/IL_college_m_Northwestern.html"},
+    {"college": "Northwestern",      "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/IL_college_f_Northwestern.html"},
+    {"college": "Ohio State",        "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/OH_college_m_Ohio_State.html"},
+    {"college": "Ohio State",        "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/OH_college_f_Ohio_State.html"},
+    {"college": "Oregon",            "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/OR_college_m_Oregon.html"},
+    {"college": "Oregon",            "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/OR_college_f_Oregon.html"},
+    {"college": "Penn State",        "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/PA_college_m_Penn_State.html"},
+    {"college": "Penn State",        "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/PA_college_f_Penn_State.html"},
+    {"college": "Purdue",            "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/IN_college_m_Purdue.html"},
+    {"college": "Purdue",            "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/IN_college_f_Purdue.html"},
+    {"college": "Rutgers",           "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NJ_college_m_Rutgers.html"},
+    {"college": "Rutgers",           "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NJ_college_f_Rutgers.html"},
+    {"college": "UCLA",              "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_m_UCLA.html"},
+    {"college": "UCLA",              "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_f_UCLA.html"},
+    {"college": "USC",               "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_m_USC.html"},
+    {"college": "USC",               "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_f_USC.html"},
+    {"college": "Washington",        "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/WA_college_m_Washington.html"},
+    {"college": "Washington",        "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/WA_college_f_Washington.html"},
+    {"college": "Wisconsin",         "conference": "Big Ten",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/WI_college_m_Wisconsin.html"},
+    {"college": "Wisconsin",         "conference": "Big Ten",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/WI_college_f_Wisconsin.html"},
+    # ── SEC ───────────────────────────────────────────────────────────────────
+    {"college": "Alabama",           "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/AL_college_m_Alabama.html"},
+    {"college": "Alabama",           "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/AL_college_f_Alabama.html"},
+    {"college": "Arkansas",          "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/AR_college_m_Arkansas.html"},
+    {"college": "Arkansas",          "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/AR_college_f_Arkansas.html"},
+    {"college": "Auburn",            "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/AL_college_m_Auburn.html"},
+    {"college": "Auburn",            "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/AL_college_f_Auburn.html"},
+    {"college": "Florida",           "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/FL_college_m_Florida.html"},
+    {"college": "Florida",           "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/FL_college_f_Florida.html"},
+    {"college": "Georgia",           "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/GA_college_m_Georgia.html"},
+    {"college": "Georgia",           "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/GA_college_f_Georgia.html"},
+    {"college": "Kentucky",          "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/KY_college_m_Kentucky.html"},
+    {"college": "Kentucky",          "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/KY_college_f_Kentucky.html"},
+    {"college": "LSU",               "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/LA_college_m_LSU.html"},
+    {"college": "LSU",               "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/LA_college_f_LSU.html"},
+    {"college": "Mississippi State", "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MS_college_m_Mississippi_State.html"},
+    {"college": "Mississippi State", "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MS_college_f_Mississippi_State.html"},
+    {"college": "Missouri",          "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MO_college_m_Missouri.html"},
+    {"college": "Missouri",          "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MO_college_f_Missouri.html"},
+    {"college": "Oklahoma",          "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/OK_college_m_Oklahoma.html"},
+    {"college": "Oklahoma",          "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/OK_college_f_Oklahoma.html"},
+    {"college": "Ole Miss",          "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MS_college_m_Ole_Miss.html"},
+    {"college": "Ole Miss",          "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MS_college_f_Ole_Miss.html"},
+    {"college": "South Carolina",    "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/SC_college_m_South_Carolina.html"},
+    {"college": "South Carolina",    "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/SC_college_f_South_Carolina.html"},
+    {"college": "Tennessee",         "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TN_college_m_Tennessee.html"},
+    {"college": "Tennessee",         "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TN_college_f_Tennessee.html"},
+    {"college": "Texas",             "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_m_Texas.html"},
+    {"college": "Texas",             "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_f_Texas.html"},
+    {"college": "Texas A&M",         "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_m_Texas_A_M.html"},
+    {"college": "Texas A&M",         "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_f_Texas_A_M.html"},
+    {"college": "Vanderbilt",        "conference": "SEC",         "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TN_college_m_Vanderbilt.html"},
+    {"college": "Vanderbilt",        "conference": "SEC",         "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TN_college_f_Vanderbilt.html"},
+    # ── Big 12 ────────────────────────────────────────────────────────────────
+    {"college": "Arizona",           "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/AZ_college_m_Arizona.html"},
+    {"college": "Arizona",           "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/AZ_college_f_Arizona.html"},
+    {"college": "Arizona State",     "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/AZ_college_m_Arizona_State.html"},
+    {"college": "Arizona State",     "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/AZ_college_f_Arizona_State.html"},
+    {"college": "Baylor",            "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_m_Baylor.html"},
+    {"college": "Baylor",            "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_f_Baylor.html"},
+    {"college": "BYU",               "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/UT_college_m_BYU.html"},
+    {"college": "BYU",               "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/UT_college_f_BYU.html"},
+    {"college": "Cincinnati",        "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/OH_college_m_Cincinnati.html"},
+    {"college": "Cincinnati",        "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/OH_college_f_Cincinnati.html"},
+    {"college": "Colorado",          "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CO_college_m_Colorado.html"},
+    {"college": "Colorado",          "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CO_college_f_Colorado.html"},
+    {"college": "Houston",           "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_m_Houston.html"},
+    {"college": "Houston",           "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_f_Houston.html"},
+    {"college": "Iowa State",        "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/IA_college_m_Iowa_State.html"},
+    {"college": "Iowa State",        "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/IA_college_f_Iowa_State.html"},
+    {"college": "Kansas",            "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/KS_college_m_Kansas.html"},
+    {"college": "Kansas",            "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/KS_college_f_Kansas.html"},
+    {"college": "Kansas State",      "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/KS_college_m_Kansas_State.html"},
+    {"college": "Kansas State",      "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/KS_college_f_Kansas_State.html"},
+    {"college": "Oklahoma State",    "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/OK_college_m_Oklahoma_State.html"},
+    {"college": "Oklahoma State",    "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/OK_college_f_Oklahoma_State.html"},
+    {"college": "TCU",               "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_m_TCU.html"},
+    {"college": "TCU",               "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_f_TCU.html"},
+    {"college": "Texas Tech",        "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_m_Texas_Tech.html"},
+    {"college": "Texas Tech",        "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/TX_college_f_Texas_Tech.html"},
+    {"college": "Utah",              "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/UT_college_m_Utah.html"},
+    {"college": "Utah",              "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/UT_college_f_Utah.html"},
+    {"college": "West Virginia",     "conference": "Big 12",      "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/WV_college_m_West_Virginia.html"},
+    {"college": "West Virginia",     "conference": "Big 12",      "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/WV_college_f_West_Virginia.html"},
+    # ── Ivy League ────────────────────────────────────────────────────────────
+    {"college": "Brown",             "conference": "Ivy League",  "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/RI_college_m_Brown.html"},
+    {"college": "Brown",             "conference": "Ivy League",  "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/RI_college_f_Brown.html"},
+    {"college": "Columbia",          "conference": "Ivy League",  "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NY_college_m_Columbia.html"},
+    {"college": "Columbia",          "conference": "Ivy League",  "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NY_college_f_Columbia.html"},
+    {"college": "Cornell",           "conference": "Ivy League",  "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NY_college_m_Cornell.html"},
+    {"college": "Cornell",           "conference": "Ivy League",  "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NY_college_f_Cornell.html"},
+    {"college": "Dartmouth",         "conference": "Ivy League",  "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NH_college_m_Dartmouth.html"},
+    {"college": "Dartmouth",         "conference": "Ivy League",  "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NH_college_f_Dartmouth.html"},
+    {"college": "Harvard",           "conference": "Ivy League",  "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MA_college_m_Harvard.html"},
+    {"college": "Harvard",           "conference": "Ivy League",  "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MA_college_f_Harvard.html"},
+    {"college": "Pennsylvania",      "conference": "Ivy League",  "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/PA_college_m_Pennsylvania.html"},
+    {"college": "Pennsylvania",      "conference": "Ivy League",  "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/PA_college_f_Pennsylvania.html"},
+    {"college": "Princeton",         "conference": "Ivy League",  "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NJ_college_m_Princeton.html"},
+    {"college": "Princeton",         "conference": "Ivy League",  "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NJ_college_f_Princeton.html"},
+    {"college": "Yale",              "conference": "Ivy League",  "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CT_college_m_Yale.html"},
+    {"college": "Yale",              "conference": "Ivy League",  "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CT_college_f_Yale.html"},
+    # ── Big East ──────────────────────────────────────────────────────────────
+    {"college": "Butler",            "conference": "Big East",    "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/IN_college_m_Butler.html"},
+    {"college": "Butler",            "conference": "Big East",    "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/IN_college_f_Butler.html"},
+    {"college": "Connecticut",       "conference": "Big East",    "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CT_college_m_Connecticut.html"},
+    {"college": "Connecticut",       "conference": "Big East",    "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CT_college_f_Connecticut.html"},
+    {"college": "Georgetown",        "conference": "Big East",    "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/DC_college_m_Georgetown.html"},
+    {"college": "Georgetown",        "conference": "Big East",    "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/DC_college_f_Georgetown.html"},
+    {"college": "Villanova",         "conference": "Big East",    "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/PA_college_m_Villanova.html"},
+    {"college": "Villanova",         "conference": "Big East",    "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/PA_college_f_Villanova.html"},
+    {"college": "Xavier",            "conference": "Big East",    "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/OH_college_m_Xavier.html"},
+    {"college": "Xavier",            "conference": "Big East",    "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/OH_college_f_Xavier.html"},
+    # ── Mountain West ─────────────────────────────────────────────────────────
+    {"college": "Air Force",         "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CO_college_m_Air_Force.html"},
+    {"college": "Air Force",         "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CO_college_f_Air_Force.html"},
+    {"college": "Boise State",       "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/ID_college_m_Boise_State.html"},
+    {"college": "Boise State",       "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/ID_college_f_Boise_State.html"},
+    {"college": "Colorado State",    "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CO_college_m_Colorado_State.html"},
+    {"college": "Colorado State",    "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CO_college_f_Colorado_State.html"},
+    {"college": "Fresno State",      "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_m_Fresno_State.html"},
+    {"college": "Fresno State",      "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_f_Fresno_State.html"},
+    {"college": "Hawaii",            "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/HI_college_m_Hawaii.html"},
+    {"college": "Hawaii",            "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/HI_college_f_Hawaii.html"},
+    {"college": "Nevada",            "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NV_college_m_Nevada.html"},
+    {"college": "Nevada",            "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NV_college_f_Nevada.html"},
+    {"college": "New Mexico",        "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NM_college_m_New_Mexico.html"},
+    {"college": "New Mexico",        "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NM_college_f_New_Mexico.html"},
+    {"college": "San Diego State",   "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_m_San_Diego_State.html"},
+    {"college": "San Diego State",   "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_f_San_Diego_State.html"},
+    {"college": "San Jose State",    "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_m_San_Jose_State.html"},
+    {"college": "San Jose State",    "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_f_San_Jose_State.html"},
+    {"college": "UNLV",              "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NV_college_m_UNLV.html"},
+    {"college": "UNLV",              "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NV_college_f_UNLV.html"},
+    {"college": "Utah State",        "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/UT_college_m_Utah_State.html"},
+    {"college": "Utah State",        "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/UT_college_f_Utah_State.html"},
+    {"college": "Wyoming",           "conference": "Mountain West","gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/WY_college_m_Wyoming.html"},
+    {"college": "Wyoming",           "conference": "Mountain West","gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/WY_college_f_Wyoming.html"},
+    # ── Atlantic 10 ───────────────────────────────────────────────────────────
+    {"college": "Dayton",            "conference": "Atlantic 10", "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/OH_college_m_Dayton.html"},
+    {"college": "Dayton",            "conference": "Atlantic 10", "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/OH_college_f_Dayton.html"},
+    {"college": "Fordham",           "conference": "Atlantic 10", "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/NY_college_m_Fordham.html"},
+    {"college": "Fordham",           "conference": "Atlantic 10", "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/NY_college_f_Fordham.html"},
+    {"college": "George Mason",      "conference": "Atlantic 10", "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_m_George_Mason.html"},
+    {"college": "George Mason",      "conference": "Atlantic 10", "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_f_George_Mason.html"},
+    {"college": "Rhode Island",      "conference": "Atlantic 10", "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/RI_college_m_Rhode_Island.html"},
+    {"college": "Rhode Island",      "conference": "Atlantic 10", "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/RI_college_f_Rhode_Island.html"},
+    {"college": "Richmond",          "conference": "Atlantic 10", "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_m_Richmond.html"},
+    {"college": "Richmond",          "conference": "Atlantic 10", "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_f_Richmond.html"},
+    {"college": "Saint Louis",       "conference": "Atlantic 10", "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MO_college_m_Saint_Louis.html"},
+    {"college": "Saint Louis",       "conference": "Atlantic 10", "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MO_college_f_Saint_Louis.html"},
+    {"college": "VCU",               "conference": "Atlantic 10", "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_m_VCU.html"},
+    {"college": "VCU",               "conference": "Atlantic 10", "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/VA_college_f_VCU.html"},
+    # ── Big Sky ───────────────────────────────────────────────────────────────
+    {"college": "Montana",           "conference": "Big Sky",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MT_college_m_Montana.html"},
+    {"college": "Montana",           "conference": "Big Sky",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MT_college_f_Montana.html"},
+    {"college": "Montana State",     "conference": "Big Sky",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/MT_college_m_Montana_State.html"},
+    {"college": "Montana State",     "conference": "Big Sky",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/MT_college_f_Montana_State.html"},
+    {"college": "Northern Arizona",  "conference": "Big Sky",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/AZ_college_m_Northern_Arizona.html"},
+    {"college": "Northern Arizona",  "conference": "Big Sky",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/AZ_college_f_Northern_Arizona.html"},
+    {"college": "Northern Colorado", "conference": "Big Sky",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CO_college_m_Northern_Colorado.html"},
+    {"college": "Northern Colorado", "conference": "Big Sky",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CO_college_f_Northern_Colorado.html"},
+    {"college": "Sacramento State",  "conference": "Big Sky",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_m_Sacramento_State.html"},
+    {"college": "Sacramento State",  "conference": "Big Sky",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/CA_college_f_Sacramento_State.html"},
+    {"college": "Weber State",       "conference": "Big Sky",     "gender": "M", "team_url": "https://www.tfrrs.org/teams/tf/UT_college_m_Weber_State.html"},
+    {"college": "Weber State",       "conference": "Big Sky",     "gender": "F", "team_url": "https://www.tfrrs.org/teams/tf/UT_college_f_Weber_State.html"},
+]
 
 
 def year_roster_url(team_url: str, year: int) -> str:
@@ -465,8 +694,12 @@ def load_schools(supabase: Client) -> list:
     Return one entry per (college, gender) combination so both men's and
     women's teams are scraped for each school.
 
-    TFRRS URLs embed gender as _m_ or _f_ in the path, so a school with
-    both programs will have two distinct team URLs in the DB.
+    Primary source: Supabase athletes table (gives a real sample_url so
+    find_team_url() can resolve the TFRRS team page).
+
+    Fallback: TFRRS_TEAM_URLS, which stores the team URL directly.
+    Schools already in the DB are NOT duplicated — the fallback only adds
+    schools with zero athletes in the DB yet.
     """
     result = (
         supabase.table("athletes")
@@ -477,7 +710,6 @@ def load_schools(supabase: Client) -> list:
         .execute()
     )
 
-    # Key = (college, gender) so we get one sample URL per team
     seen: dict = {}
     for row in (result.data or []):
         college = (row.get("college") or "").strip()
@@ -485,7 +717,6 @@ def load_schools(supabase: Client) -> list:
         if not college or not url:
             continue
 
-        # Detect gender from URL: _m_ = men, _f_ = women, unknown = None
         if "_college_m_" in url or "_m_" in url:
             gender = "M"
         elif "_college_f_" in url or "_f_" in url:
@@ -499,11 +730,29 @@ def load_schools(supabase: Client) -> list:
                 "college":    college,
                 "conference": (row.get("conference") or "").strip(),
                 "sample_url": url,
+                "team_url":   None,   # resolved dynamically via find_team_url()
                 "gender":     gender,
             }
 
+    # ── Merge fallback entries ────────────────────────────────────────────────
+    fallback_added = 0
+    for entry in TFRRS_TEAM_URLS:
+        key = (entry["college"], entry["gender"])
+        if key not in seen:
+            seen[key] = {
+                "college":    entry["college"],
+                "conference": entry["conference"],
+                "sample_url": None,           # not needed — team_url is pre-set
+                "team_url":   entry["team_url"],
+                "gender":     entry["gender"],
+            }
+            fallback_added += 1
+
     teams = list(seen.values())
-    log.info(f"Loaded {len(teams)} distinct school/gender teams from DB")
+    log.info(
+        f"Loaded {len(teams)} distinct school/gender teams "
+        f"({len(teams) - fallback_added} from DB, {fallback_added} from fallback list)"
+    )
     return teams
 
 
@@ -592,7 +841,6 @@ def process_athlete(
 ) -> str:
     """
     Evaluate one athlete from a year-specific roster.
-
     Checks that last_spring == target_year (they were a senior that year).
     Returns: "added" | "updated" | "not_senior" | "error"
     """
@@ -676,6 +924,8 @@ def main():
     parser.add_argument("--years", type=int, nargs="+",
                         default=[2023, 2024, 2025], metavar="YEAR",
                         help="Target graduation spring years (default: 2023 2024 2025)")
+    parser.add_argument("--school", type=str, default=None,
+                        help="Process only this school by name, e.g. --school Syracuse")
     parser.add_argument("--debug", action="store_true",
                         help="Enable DEBUG logging")
     args = parser.parse_args()
@@ -690,42 +940,56 @@ def main():
 
     supabase = get_supabase()
     schools  = load_schools(supabase)
+
+    # ── Optional single-school filter ─────────────────────────────────────────
+    if args.school:
+        schools = [s for s in schools if s["college"].lower() == args.school.lower()]
+        if not schools:
+            log.error(f"No school found matching '{args.school}' — check spelling")
+            sys.exit(1)
+        log.info(f"Filtered to school: {args.school} ({len(schools)} team(s))")
+
     if args.limit:
         schools = schools[:args.limit]
         log.info(f"Limited to {args.limit} schools")
 
-    existing_ids = load_existing_ids(supabase)
-    counters = {"added": 0, "updated": 0, "not_senior": 0, "error": 0}
+    existing_ids  = load_existing_ids(supabase)
+    counters      = {"added": 0, "updated": 0, "not_senior": 0, "error": 0}
     total_schools = len(schools)
 
     for idx, school in enumerate(schools, 1):
-        college    = school["college"]
-        sample_url = school["sample_url"]
-        log.info(f"\n[{idx}/{total_schools}] {college}")
+        college  = school["college"]
+        log.info(f"\n[{idx}/{total_schools}] {college} ({school['gender']})")
 
         # ── Resolve team base URL ──────────────────────────────────────────────
-        sample_soup = fetch(sample_url)
-        time.sleep(REQUEST_DELAY)
-        if not sample_soup:
-            log.warning(f"  Could not fetch sample page for {college}")
-            counters["error"] += 1
-            continue
+        # Fallback entries from TFRRS_TEAM_URLS already have team_url set, so
+        # we skip the sample-page fetch for those.
+        team_url = school.get("team_url")
 
-        team_url = find_team_url(sample_soup)
-
-        # Fallback: construct from athlete URL slug
         if not team_url:
-            m = re.search(r"/athletes/\d+/([^/]+)/", sample_url)
-            if m:
-                slug = m.group(1)
-                for sport in ("tf", "xc"):
-                    candidate_url = f"{TFRRS_BASE}/teams/{sport}/US/{slug}.html"
-                    test = fetch(candidate_url)
-                    time.sleep(REQUEST_DELAY)
-                    if test and test.select("a[href*='/athletes/']"):
-                        team_url = candidate_url
-                        log.info(f"  Constructed team URL: {team_url}")
-                        break
+            sample_url  = school["sample_url"]
+            sample_soup = fetch(sample_url)
+            time.sleep(REQUEST_DELAY)
+            if not sample_soup:
+                log.warning(f"  Could not fetch sample page for {college}")
+                counters["error"] += 1
+                continue
+
+            team_url = find_team_url(sample_soup)
+
+            # Fallback: construct from athlete URL slug
+            if not team_url:
+                m = re.search(r"/athletes/\d+/([^/]+)/", sample_url)
+                if m:
+                    slug = m.group(1)
+                    for sport in ("tf", "xc"):
+                        candidate_url = f"{TFRRS_BASE}/teams/{sport}/US/{slug}.html"
+                        test = fetch(candidate_url)
+                        time.sleep(REQUEST_DELAY)
+                        if test and test.select("a[href*='/athletes/']"):
+                            team_url = candidate_url
+                            log.info(f"  Constructed team URL: {team_url}")
+                            break
 
         if not team_url:
             log.warning(f"  Could not find team URL for {college}, skipping")
